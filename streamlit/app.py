@@ -201,7 +201,7 @@ def overview_page():
         (f'{crime_name} per 1,000 people, 2023', f'{rate_2023:.2f}', f'{signed((rate_2023 / rate_2022 - 1) * 100)} from 2022'),
         (f'{crime_name} cases, 2023', f'{cases_2023:,.0f}', f'{signed((cases_2023 / cases_2016 - 1) * 100)} from 2016'),
         ('Districts to review', counts.get('Review', 0), 'above expected and rising', 'stat-review'),
-        ('Districts to monitor', counts.get('Monitor', 0), 'one of the two flags', 'stat-monitor'),
+        ('Districts to monitor', counts.get('Monitor', 0), 'crime above expected', 'stat-monitor'),
     ])
 
     left, right = st.columns(2)
@@ -324,7 +324,7 @@ def next_step_text(row):
                 'check local factors that the data does not cover, such as tourism, commuters, nightlife or specific '
                 'hotspots, and whether current prevention work matches the trend.')
     if row['above_expected']:
-        return ('Crime here is above the expected level but not rising. Keep the district on the watch list and '
+        return ('Crime here is above the expected level but not rising sharply. Keep the district on the watch list and '
                 'compare it with the similar districts below to see what differs.')
     if row['rising']:
         return ('Crime here is not above the expected level, but the 2023 rate rose. Check whether the rise '
