@@ -18,6 +18,7 @@ STATUS_COLOURS = [RED, ORANGE, BLUE]
 LINE_COLOURS = [RED, ORANGE, BLUE]
 REFERENCE_GREY = '#8a909a'
 LIGHT_BLUE = '#8B93FC'
+TEAL = '#5bbcbe'
 
 # inputs of the cross-district model, with how they are shown in the app.
 # shares are stored as fractions and shown as percentages
@@ -49,6 +50,10 @@ st.markdown("""
 }
 @media (max-width: 640px) {:root {--gutter: 1rem;}}
 [data-testid="stHeader"] {background: var(--card); border-bottom: 1px solid var(--line);}
+/* app title in the header bar; moved right when the sidebar is collapsed so it clears the expand button */
+[data-testid="stHeader"]::before {content: 'District Crime Viewer'; position: absolute; left: 1.5rem; top: 50%;
+  transform: translateY(-50%); font-weight: 600; color: var(--ink); font-size: 1.25rem;}
+[data-testid="stHeader"]:has([data-testid="stExpandSidebarButton"])::before {left: 3.75rem;}
 .block-container {max-width: none; padding: 3.75rem var(--gutter) 4rem var(--gutter);}
 
 /* dark band */
@@ -76,7 +81,14 @@ st.markdown("""
 .stat-note {font-size: 1rem; color: var(--muted);}
 .stat-fill {background: var(--accent); border-color: var(--accent);}
 .stat-fill .stat-label, .stat-fill .stat-value, .stat-fill .stat-note {color: #ffffff;}
-.stat-pct {color: var(--light-blue); font-weight: 700;}
+.stat-pct-up {color: var(--red); font-weight: 700;}
+.stat-pct-down {color: var(--light-blue); font-weight: 700;}
+/* cards in one row take the height of the tallest card */
+[data-testid="stColumn"]:has(> .stVerticalBlock > [data-testid="stElementContainer"] .stat) > .stVerticalBlock {height: 100%;}
+.stVerticalBlock > [data-testid="stElementContainer"]:has(.stat) {flex: 1 1 auto;}
+.stMarkdown:has(.stat), .stMarkdown:has(.stat) > div {height: 100%;}
+[data-testid="stMarkdownContainer"]:has(> .stat) {height: 100%; margin-bottom: 0;}
+.stat {height: 100%; box-sizing: border-box;}
 
 /* status labels */
 .status {display: inline-block; padding: 0.1rem 0.6rem; border-radius: 3px; font-size: 0.85rem; font-weight: 600; color: #ffffff;}
@@ -99,6 +111,9 @@ div[class*="st-key-panel-"] h3 {font-size: 1.15rem; font-weight: 700; padding: 0
 /* outlined buttons, as in the panel headers of the reference layout */
 button[data-testid="stBaseButton-secondary"] {background: transparent; border: 1px solid var(--teal-ink); color: var(--teal-ink);}
 button[data-testid="stBaseButton-secondary"]:hover {background: var(--teal-ink); border-color: var(--teal-ink); color: #ffffff;}
+/* the two buttons in the Overview summary panel have the same width, side by side or stacked */
+.st-key-panel-summary [data-testid="stElementContainer"]:has(.stButton) {flex: 0 1 12rem; width: 12rem;}
+.st-key-panel-summary .stButton button {width: 100%;}
 
 .next-step {background: var(--card); border: 1px solid var(--line); border-left: 6px solid var(--accent); border-radius: 4px;
             padding: 1rem 1.25rem; margin-bottom: 0.5rem; color: var(--ink); --accent: var(--blue);}
@@ -176,9 +191,13 @@ def rates_by_year(years, group):
         totals[f'{crime}_rate'] = totals[f'crimes_{crime}'] / totals['population']
     return totals
 
+def pct_span(match):
+    text = match.group(0)
+    sign_class = 'stat-pct-down' if text.startswith('-') else 'stat-pct-up'
+    return f'<span class="stat-pct {sign_class}">{text}</span>'
 
 def stat(label, value, note='', kind=''):
-    note = re.sub(r'[+-]?\d+(?:\.\d+)?%', r'<span class="stat-pct">\g<0></span>', note)
+    note = re.sub(r'[+-]?\d+(?:\.\d+)?%', pct_span, note)
     return (f'<div class="stat {kind}"><div class="stat-label">{label}</div>'
             f'<div class="stat-value">{value}</div><div class="stat-note">{note}</div></div>')
 
@@ -237,8 +256,8 @@ if 'selected_district' not in st.session_state:
     st.session_state['selected_district'] = sorted(districts['district'])[0]
 
 with st.sidebar:
-    st.markdown('### District Crime Viewer')
-    st.caption('For crime-prevention planners deciding which Malaysian districts need a closer look.')
+    st.markdown('# District Crime Viewer')
+    st.caption('For crime-prevention planners and policy makers.')
     page = st.radio('Page', PAGES, key='page')
     crime = st.radio('Crime type', list(CRIMES), format_func=CRIMES.get, key='crime')
     with st.expander('Flag settings'):
@@ -262,7 +281,7 @@ def overview_page():
     counts = table['status'].value_counts()
 
     with band():
-        st.title('Crime across Malaysia’s districts')
+        st.title('Summary view')
         st.markdown(
             '<p class="page-lead">Crime rates depend a lot on what a district is like: larger, richer districts '
             'record more crime per person. This tool compares each district with the rate expected for districts '
@@ -279,7 +298,7 @@ def overview_page():
     with left, panel('cases'):
         st.subheader('Cases per year', anchor=False)
         cases = national.reset_index()[['year', f'crimes_{crime}']].rename(columns={f'crimes_{crime}': 'cases'})
-        chart = alt.Chart(cases).mark_line(point=alt.OverlayMarkDef(color=BLUE, size=65), color=LIGHT_BLUE, strokeWidth=3.5).encode(
+        chart = alt.Chart(cases).mark_line(point=alt.OverlayMarkDef(color=BLUE, size=65), color=TEAL, strokeWidth=3.5).encode(
             x=alt.X('year:O', title=None), y=alt.Y('cases:Q', title='Cases'),
             tooltip=['year', alt.Tooltip('cases:Q', format=',')])
         st.altair_chart(chart.properties(background='transparent'), height=440)
@@ -505,9 +524,9 @@ def reset_profile(name):
 def profile_check_page():
     district_names = sorted(districts['district'])
     with band():
-        st.title('Check a district profile')
+        st.title('Sandbox mode: crime rate prediction')
         st.markdown(
-            '<p class="page-lead">View each district data. '
+            '<p class="page-lead">Adjust each district data to see how changes affect crime rate predictions.</br>'
             'Parameters are customizable below.</p>', unsafe_allow_html=True)
         pick, _ = st.columns([1, 2])
         name = pick.selectbox('Start from', district_names, index=district_names.index(st.session_state['selected_district']),
