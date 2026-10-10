@@ -4,15 +4,15 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title='District Crime Planner', page_icon='🧭', layout='wide')
+st.set_page_config(page_title='District Crime Viewer', page_icon='🧭', layout='wide')
 
-CRIMES = {'assault': 'Assault', 'property': 'Property crime'}
-PAGES = ['Overview', 'Districts to review', 'District profile', 'Profile check', 'About the data and models']
-STATUSES = ['Review', 'Monitor', 'No flag']
-STATUS_CLASSES = {'Review': 'status-review', 'Monitor': 'status-monitor', 'No flag': 'status-noflag'}
+CRIMES = {'assault': 'Assault crime', 'property': 'Property crime'}
+PAGES = ['Overview', 'Districts needing attention', 'District profile', 'Profile check', 'About the data and models']
+STATUSES = ['Attention', 'Monitor', 'Normal']
+STATUS_CLASSES = {'Attention': 'status-review', 'Monitor': 'status-monitor', 'Normal': 'status-noflag'}
 
-# data colours: red, burnt orange and dark blue, used for statuses and chart series
-RED, ORANGE, BLUE = '#c8102e', '#b84a00', '#12306b'
+# data colours: red, light orange and dark blue, used for statuses and chart series
+RED, ORANGE, BLUE = '#c8102e', '#E0A124', '#12306b'
 STATUS_COLOURS = [RED, ORANGE, BLUE]
 LINE_COLOURS = [RED, ORANGE, BLUE]
 REFERENCE_GREY = '#8a909a'
@@ -42,7 +42,7 @@ st.markdown("""
   --band: #232529; --band-card: #2d3034; --band-line: #3f434a; --band-text: #c3c8cf;
   --page: #eceef1; --card: #ffffff; --line: #dcdfe4; --ink: #1e2126; --muted: #5c6370;
   --teal: #5bbcbe; --teal-ink: #23797c;
-  --red: #c8102e; --orange: #b84a00; --blue: #12306b;
+  --red: #c8102e; --orange: #E0A124; --blue: #12306b;
   --gutter: 2.5rem;
 }
 @media (max-width: 640px) {:root {--gutter: 1rem;}}
@@ -63,23 +63,27 @@ st.markdown("""
 .district-heading .status {margin-left: 0.35rem;}
 
 /* number tiles in the band */
-.stat {background: var(--band-card); border: 1px solid var(--band-line); border-top: 4px solid var(--accent);
-       border-radius: 10px; padding: 0.85rem 1.1rem 1rem; min-height: 8.25rem; --accent: var(--band-line);}
+.stat {background: #f0f2f6; border: 1px solid var(--band-line);
+       border-radius: 6px; padding: 0.85rem 1.1rem 1rem; min-height: 8.25rem; --accent: var(--band-line);}
 .stat-review {--accent: var(--red);}
 .stat-monitor {--accent: var(--orange);}
 .stat-noflag {--accent: var(--blue);}
-.stat-label {font-size: 0.86rem; color: var(--band-text);}
-.stat-value {font-size: 2.1rem; font-weight: 700; color: #ffffff; line-height: 1.2; letter-spacing: -0.02em;
+.stat-label {font-size: 0.86rem; color: var(--muted);}
+.stat-value {font-size: 2.1rem; font-weight: 700; color: var(--ink); line-height: 1.2; letter-spacing: -0.02em;
              font-variant-numeric: tabular-nums; margin-top: 0.2rem;}
-.stat-note {font-size: 0.84rem; color: var(--band-text);}
+.stat-note {font-size: 0.84rem; color: var(--muted);}
 .stat-fill {background: var(--accent); border-color: var(--accent);}
-.stat-fill .stat-label, .stat-fill .stat-note {color: #ffffff;}
+.stat-fill .stat-label, .stat-fill .stat-value, .stat-fill .stat-note {color: #ffffff;}
 
 /* status labels */
 .status {display: inline-block; padding: 0.1rem 0.6rem; border-radius: 3px; font-size: 0.85rem; font-weight: 600; color: #ffffff;}
 .status-review {background: var(--red);}
 .status-monitor {background: var(--orange);}
 .status-noflag {background: var(--blue);}
+/* status filter tags on the Districts needing attention page, in the same colours as the status labels */
+.st-key-status_filter [data-tag][aria-label="Attention"], .st-key-status_filter span[data-baseweb="tag"]:has(span[title="Attention"]) {background: var(--red);}
+.st-key-status_filter [data-tag][aria-label="Monitor"], .st-key-status_filter span[data-baseweb="tag"]:has(span[title="Monitor"]) {background: var(--orange);}
+.st-key-status_filter [data-tag][aria-label="Normal"], .st-key-status_filter span[data-baseweb="tag"]:has(span[title="Normal"]) {background: var(--blue);}
 
 /* white panels */
 div[class*="st-key-panel-"] {background: var(--card); border: 1px solid var(--line); border-radius: 4px;
@@ -156,7 +160,7 @@ def district_table(districts, years, crime, above_pct, rising_pct, min_cases):
     table['above_expected'] = table['gap_pct'] >= above_pct
     table['rising'] = (table['change_pct'] >= rising_pct) & (table['cases_2023'] >= min_cases)
     table['status'] = np.select([table['above_expected'] & table['rising'], table['above_expected'] | table['rising']],
-                                ['Review', 'Monitor'], 'No flag')
+                                ['Attention', 'Monitor'], 'Normal')
     return table
 
 
@@ -229,7 +233,7 @@ if 'selected_district' not in st.session_state:
     st.session_state['selected_district'] = sorted(districts['district'])[0]
 
 with st.sidebar:
-    st.markdown('### District Crime Planner')
+    st.markdown('### District Crime Viewer')
     st.caption('For crime-prevention planners deciding which Malaysian districts need a closer look.')
     page = st.radio('Page', PAGES, key='page')
     crime = st.radio('Crime type', list(CRIMES), format_func=CRIMES.get, key='crime')
@@ -263,7 +267,7 @@ def overview_page():
         show_stats([
             (f'{crime_name} per 1,000 people, 2023', f'{rate_2023:.2f}', f'{signed((rate_2023 / rate_2022 - 1) * 100)} from 2022'),
             (f'{crime_name} cases, 2023', f'{cases_2023:,.0f}', f'{signed((cases_2023 / cases_2016 - 1) * 100)} from 2016'),
-            ('Districts to review', counts.get('Review', 0), 'above expected and rising', 'stat-fill stat-review'),
+            ('Districts needing attention', counts.get('Attention', 0), 'crime above expected and rising', 'stat-fill stat-review'),
             ('Districts to monitor', counts.get('Monitor', 0), 'crime above expected', 'stat-fill stat-monitor'),
         ])
 
@@ -290,7 +294,7 @@ def overview_page():
     above = (table['gap_pct'] >= above_pct).sum()
     with panel('summary'):
         buttons = panel_header('What this shows')
-        buttons.button('Open the review list', on_click=go_to, args=('Districts to review',), type='primary')
+        buttons.button('Open the review list', on_click=go_to, args=('Districts needing attention',), type='primary')
         buttons.button('Check a district profile', on_click=go_to, args=('Profile check',))
         st.markdown(
             f'- {crime_name} cases {"fell" if cases_2023 < cases_2016 else "rose"} from {cases_2016:,.0f} in 2016 to {cases_2023:,.0f} in 2023.\n'
@@ -304,10 +308,10 @@ def overview_page():
 def review_page():
     counts = table['status'].value_counts()
     with band():
-        st.title('Districts to review')
+        st.title('Districts needing attention')
         st.markdown(
             f'<p class="page-lead">Districts whose {crime_name.lower()} rate is higher than expected for their profile, '
-            'or rising, are flagged here. Use the list to choose districts for a closer look, then open a district '
+            'or showing rising crime rate, are flagged here. Use the list to choose districts for a closer look, then open a district '
             'profile to see why it was flagged.</p>', unsafe_allow_html=True)
         show_stats([(status, counts.get(status, 0), f'of {len(table)} districts',
                      'stat-fill ' + STATUS_CLASSES[status].replace('status', 'stat')) for status in STATUSES])
@@ -320,7 +324,7 @@ def review_page():
             f'- **Above expected**: the 2020–2023 average is at least {above_pct}% above the expected rate.\n'
             f'- **Rising**: the 2023 rate is at least {rising_pct}% above the district’s 2020–2022 average, with at '
             f'least {min_cases} cases in 2023, so that a few extra cases in a small district do not set the flag.\n'
-            f'- **Review**: both flags. **Monitor**: one flag. The thresholds can be changed under Flag settings.')
+            f'- **Attention**: Crime reported is above expected and rising. **Monitor**: Crime reported is above expected but not rising sharply. The thresholds can be changed under Flag settings in the sidebar.')
 
     with panel('scatter'):
         st.subheader('Actual compared with expected, 2020–2023', anchor=False)
@@ -339,7 +343,7 @@ def review_page():
     with panel('list'):
         header_buttons = panel_header('List')
         filter_left, filter_right = st.columns(2)
-        chosen_statuses = filter_left.multiselect('Status', STATUSES, default=['Review', 'Monitor'])
+        chosen_statuses = filter_left.multiselect('Status', STATUSES, default=['Attention', 'Monitor'], key='status_filter')
         chosen_states = filter_right.multiselect('State', sorted(table['state'].unique()), placeholder='All states')
         shown = table[table['status'].isin(chosen_statuses)]
         if chosen_states:
@@ -361,7 +365,7 @@ def review_page():
             'rate_2023': st.column_config.NumberColumn('2023 rate', format='%.2f'),
             'change_pct': st.column_config.NumberColumn('2023 vs 2020–2022 (%)', format='%+.0f'),
             'cases_2023': st.column_config.NumberColumn('Cases 2023', format='%d'),
-            'outlook_2024': st.column_config.NumberColumn('2024 model outlook', format='%.2f'),
+            'outlook_2024': st.column_config.NumberColumn('2024 prediction', format='%.2f'),
         })
         st.caption(f'Rates are {crime_name.lower()} cases per 1,000 people.')
 
@@ -382,7 +386,7 @@ def similar_districts(name, count=5):
 
 
 def next_step_text(row):
-    if row['status'] == 'Review':
+    if row['status'] == 'Attention':
         return ('Crime here is above the expected level and rising. Put this district on the review shortlist: '
                 'check local factors that the data does not cover, such as tourism, commuters, nightlife or specific '
                 'hotspots, and whether current prevention work matches the trend.')
@@ -399,6 +403,7 @@ def profile_page():
     district_names = sorted(districts['district'])
     with band():
         st.title('District profile')
+        st.markdown('<p class="page-lead">View the profile of each district.</p>', unsafe_allow_html=True)
         pick, _ = st.columns([1, 2])
         name = pick.selectbox('District', district_names, index=district_names.index(st.session_state['selected_district']),
                               format_func=district_label, key='profile_district', on_change=remember_district, args=('profile_district',))
@@ -419,10 +424,10 @@ def profile_page():
             ('2020–2023 average', f'{row["average"]:.2f}', 'per 1,000 people', kind),
             ('Expected for this profile', f'{row["expected"]:.2f}', f'gap {signed(row["gap_pct"])}', kind),
             ('2023 rate', f'{row["rate_2023"]:.2f}', f'{signed(row["change_pct"])} vs 2020–2022, {row["cases_2023"]:,.0f} cases', kind),
-            ('2024 model outlook', f'{row["outlook_2024"]:.2f}', 'year-ahead model', 'stat-quiet'),
+            ('2024 prediction', f'{row["outlook_2024"]:.2f}', 'year-ahead model', 'stat-quiet'),
         ])
 
-    kind_class = kind if row['status'] != 'No flag' else ''
+    kind_class = kind if row['status'] != 'Normal' else ''
     st.markdown(f'<div class="next-step {kind_class}"><strong>Suggested next step</strong><p>{next_step_text(row)}</p></div>',
                 unsafe_allow_html=True)
     if row['cases_2023'] < min_cases:
@@ -445,7 +450,7 @@ def profile_page():
             color=alt.Color('series:N', scale=alt.Scale(domain=order, range=LINE_COLOURS), title=None, sort=order),
             tooltip=['series', 'year', alt.Tooltip('rate:Q', format='.2f')])
         st.altair_chart(chart.properties(background='transparent'))
-        st.caption(f'The 2024 outlook from the year-ahead model is {row["outlook_2024"]:.2f}. In the 2023 test, '
+        st.caption(f'The 2024 prediction from the year-ahead model is {row["outlook_2024"]:.2f}. In the 2023 test, '
                    f'using the previous year’s rate was more accurate (R² {baseline_r2:.2f}) than this model '
                    f'(R² {model_r2:.2f}), so treat the outlook as a rough guide.')
     with right, panel('similar'):
@@ -498,9 +503,8 @@ def profile_check_page():
     with band():
         st.title('Check a district profile')
         st.markdown(
-            '<p class="page-lead">Start from a district and change its profile, for example to reflect population '
-            'growth or a new housing area, to see the crime rate that is typical for districts like it. The result '
-            'shows a pattern in the data, not the effect of a policy.</p>', unsafe_allow_html=True)
+            '<p class="page-lead">View each district data. '
+            'Parameters are customizable below.</p>', unsafe_allow_html=True)
         pick, _ = st.columns([1, 2])
         name = pick.selectbox('Start from', district_names, index=district_names.index(st.session_state['selected_district']),
                               format_func=district_label, key='check_district', on_change=remember_district, args=('check_district',))
@@ -583,7 +587,7 @@ def about_page():
             f'- Tested on 10 random splits of the districts (80% training, 20% test). The mean test R² is '
             f'{summary.loc["assault_per_1000", "mean"]:.2f} for assault and {summary.loc["property_per_1000", "mean"]:.2f} for '
             f'property crime, so the profile explains part of the differences between districts, not all of them.')
-        chart = alt.Chart(repeated.replace({'assault_per_1000': 'Assault', 'property_per_1000': 'Property crime'})).mark_line(point=True, strokeWidth=2.5).encode(
+        chart = alt.Chart(repeated.replace({'assault_per_1000': 'Assault crime', 'property_per_1000': 'Property crime'})).mark_line(point=True, strokeWidth=2.5).encode(
             x=alt.X('split:O', title='Split'), y=alt.Y('R2:Q', title='Test R²'),
             color=alt.Color('target:N', scale=alt.Scale(range=[RED, BLUE]), title=None),
             tooltip=['target', 'split', 'model', alt.Tooltip('R2:Q', format='.2f')])
@@ -592,9 +596,9 @@ def about_page():
 
     left, right = st.columns([1.25, 1])
     with left, panel('yearahead'):
-        st.subheader('Year-ahead model: the 2024 outlook', anchor=False)
+        st.subheader('Year-ahead model: the 2024 prediction', anchor=False)
         test = year_ahead['test_results'].copy()
-        test['target'] = test['target'].map({'assault_per_1000': 'Assault', 'property_per_1000': 'Property crime'})
+        test['target'] = test['target'].map({'assault_per_1000': 'Assault crime', 'property_per_1000': 'Property crime'})
         st.markdown(
             '- Trained on 2022 and tested on 2023 for the same districts, then trained on 2022 and 2023 to predict 2024.\n'
             '- In the 2023 test, using each district’s previous-year rate was more accurate than the model, so the 2024 '
@@ -611,9 +615,9 @@ def about_page():
             'commuters or tourists can show high rates.\n'
             '- There is no 2023 income survey; 2023 income is estimated from the 2022 and 2024 surveys.\n'
             '- Serdang’s 2020 and 2021 property crime totals were corrected in the source data (other theft was counted twice).\n'
-            '- Crime data ends in 2023, so the 2024 outlook cannot be checked yet.\n'
+            '- Crime data ends in 2023, so the 2024 prediction cannot be checked yet.\n'
             '- The models show patterns between districts, not causes.')
 
 
-{'Overview': overview_page, 'Districts to review': review_page, 'District profile': profile_page,
+{'Overview': overview_page, 'Districts needing attention': review_page, 'District profile': profile_page,
  'Profile check': profile_check_page, 'About the data and models': about_page}[page]()
