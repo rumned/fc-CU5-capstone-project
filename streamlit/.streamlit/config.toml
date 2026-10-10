@@ -1,6 +1,17 @@
 [theme]
 base = "light"
-primaryColor = "#1d4e89"
-backgroundColor = "#f7f8fa"
-secondaryBackgroundColor = "#eceff3"
-textColor = "#17212e"
+font = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap, sans-serif"
+primaryColor = "#23797c"
+backgroundColor = "#eceef1"
+secondaryBackgroundColor = "#f4f5f7"
+textColor = "#1e2126"
+borderColor = "#dcdfe4"
+baseRadius = "4px"
+dataframeHeaderBackgroundColor = "#f4f5f7"
+
+[theme.sidebar]
+backgroundColor = "#4b5264"
+secondaryBackgroundColor = "#5a6275"
+textColor = "#ffffff"
+primaryColor = "#5bbcbe"
+borderColor = "#6b7386"
