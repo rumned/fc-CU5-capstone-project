@@ -3,6 +3,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
+import re
 
 st.set_page_config(page_title='District Crime Viewer', page_icon='🧭', layout='wide')
 
@@ -16,6 +17,7 @@ RED, ORANGE, BLUE = '#c8102e', '#E0A124', '#12306b'
 STATUS_COLOURS = [RED, ORANGE, BLUE]
 LINE_COLOURS = [RED, ORANGE, BLUE]
 REFERENCE_GREY = '#8a909a'
+LIGHT_BLUE = '#8B93FC'
 
 # inputs of the cross-district model, with how they are shown in the app.
 # shares are stored as fractions and shown as percentages
@@ -42,7 +44,7 @@ st.markdown("""
   --band: #232529; --band-card: #2d3034; --band-line: #3f434a; --band-text: #c3c8cf;
   --page: #eceef1; --card: #ffffff; --line: #dcdfe4; --ink: #1e2126; --muted: #5c6370;
   --teal: #5bbcbe; --teal-ink: #23797c;
-  --red: #c8102e; --orange: #E0A124; --blue: #12306b;
+  --red: #c8102e; --orange: #E0A124; --blue: #12306b; --light-blue:#8B93FC;
   --gutter: 2.5rem;
 }
 @media (max-width: 640px) {:root {--gutter: 1rem;}}
@@ -68,12 +70,13 @@ st.markdown("""
 .stat-review {--accent: var(--red);}
 .stat-monitor {--accent: var(--orange);}
 .stat-noflag {--accent: var(--blue);}
-.stat-label {font-size: 0.86rem; color: var(--muted);}
+.stat-label {font-size: 1rem; color: var(--blue);}
 .stat-value {font-size: 2.1rem; font-weight: 700; color: var(--ink); line-height: 1.2; letter-spacing: -0.02em;
              font-variant-numeric: tabular-nums; margin-top: 0.2rem;}
-.stat-note {font-size: 0.84rem; color: var(--muted);}
+.stat-note {font-size: 1rem; color: var(--muted);}
 .stat-fill {background: var(--accent); border-color: var(--accent);}
 .stat-fill .stat-label, .stat-fill .stat-value, .stat-fill .stat-note {color: #ffffff;}
+.stat-pct {color: var(--light-blue); font-weight: 700;}
 
 /* status labels */
 .status {display: inline-block; padding: 0.1rem 0.6rem; border-radius: 3px; font-size: 0.85rem; font-weight: 600; color: #ffffff;}
@@ -175,6 +178,7 @@ def rates_by_year(years, group):
 
 
 def stat(label, value, note='', kind=''):
+    note = re.sub(r'[+-]?\d+(?:\.\d+)?%', r'<span class="stat-pct">\g<0></span>', note)
     return (f'<div class="stat {kind}"><div class="stat-label">{label}</div>'
             f'<div class="stat-value">{value}</div><div class="stat-note">{note}</div></div>')
 
@@ -275,7 +279,7 @@ def overview_page():
     with left, panel('cases'):
         st.subheader('Cases per year', anchor=False)
         cases = national.reset_index()[['year', f'crimes_{crime}']].rename(columns={f'crimes_{crime}': 'cases'})
-        chart = alt.Chart(cases).mark_line(point=alt.OverlayMarkDef(color=BLUE, size=45), color=BLUE, strokeWidth=2.5).encode(
+        chart = alt.Chart(cases).mark_line(point=alt.OverlayMarkDef(color=BLUE, size=65), color=LIGHT_BLUE, strokeWidth=3.5).encode(
             x=alt.X('year:O', title=None), y=alt.Y('cases:Q', title='Cases'),
             tooltip=['year', alt.Tooltip('cases:Q', format=',')])
         st.altair_chart(chart.properties(background='transparent'), height=440)
@@ -283,12 +287,12 @@ def overview_page():
         st.subheader('Rate by state, 2023', anchor=False)
         states = rates_by_year(years, 'state')
         states = states[states['year'] == 2023][['state', f'{crime}_rate']].rename(columns={f'{crime}_rate': 'rate'})
-        bars = alt.Chart(states).mark_bar(color=BLUE).encode(
+        bars = alt.Chart(states).mark_bar(color=REFERENCE_GREY).encode(
             x=alt.X('rate:Q', title='Per 1,000 people'), y=alt.Y('state:N', sort='-x', title=None),
             tooltip=['state', alt.Tooltip('rate:Q', format='.2f')])
-        national_line = alt.Chart(pd.DataFrame({'rate': [rate_2023]})).mark_rule(color=RED, strokeDash=[5, 3], strokeWidth=2).encode(x='rate:Q')
+        national_line = alt.Chart(pd.DataFrame({'rate': [rate_2023]})).mark_rule(color=BLUE, strokeDash=[5, 3], strokeWidth=2).encode(x='rate:Q')
         st.altair_chart((bars + national_line).properties(background='transparent'), height=440)
-        st.caption('The red dashed line is the national rate.')
+        st.caption('The dashed line is the national rate.')
 
     highest_state = states.sort_values('rate').iloc[-1]
     above = (table['gap_pct'] >= above_pct).sum()
@@ -477,7 +481,7 @@ def profile_page():
         st.dataframe(pd.DataFrame(rows), hide_index=True, column_config={
             name: st.column_config.NumberColumn(format='%.2f'),
             'Median district': st.column_config.NumberColumn(format='%.2f'),
-            'Higher than (% of districts)': st.column_config.ProgressColumn(format='%.0f', min_value=0, max_value=100, color=BLUE)})
+            'Higher than (% of districts)': st.column_config.ProgressColumn(format='%.0f', min_value=0, max_value=100, color=REFERENCE_GREY)})
 
         report = (f'# {name}, {profile["state"]}: {crime_name.lower()}\n\n'
                   f'Status: {row["status"]} (above expected by at least {above_pct}%, rising by at least {rising_pct}%)\n\n'
