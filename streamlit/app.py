@@ -45,7 +45,7 @@ st.markdown("""
   --band: #232529; --band-card: #2d3034; --band-line: #3f434a; --band-text: #c3c8cf;
   --page: #eceef1; --card: #ffffff; --line: #dcdfe4; --ink: #1e2126; --muted: #5c6370;
   --teal: #5bbcbe; --teal-ink: #23797c;
-  --red: #c8102e; --orange: #E0A124; --blue: #12306b; --light-blue:#8B93FC;
+  --red: #c8102e; --orange: #E0A124; --blue: #12306b; --light-blue:#8B93FC; --reference-grey: #8a909a;
   --gutter: 2.5rem;
 }
 @media (max-width: 640px) {:root {--gutter: 1rem;}}
@@ -83,7 +83,7 @@ st.markdown("""
 .stat-fill .stat-label, .stat-fill .stat-value, .stat-fill .stat-note {color: #ffffff;}
 .stat-pct-up {color: var(--red); font-weight: 700;}
 .stat-pct-down {color: var(--blue); font-weight: 700;}
-.stat-pct-nosign {color: var(--teal); font-weight: 700;}
+.stat-pct-nosign {color: var(--reference-grey); font-weight: 700;}
 /* cards in one row take the height of the tallest card */
 [data-testid="stColumn"]:has(> .stVerticalBlock > [data-testid="stElementContainer"] .stat) > .stVerticalBlock {height: 100%;}
 .stVerticalBlock > [data-testid="stElementContainer"]:has(.stat) {flex: 1 1 auto;}
@@ -115,6 +115,9 @@ button[data-testid="stBaseButton-secondary"]:hover {background: var(--teal-ink);
 /* the two buttons in the Overview summary panel have the same width, side by side or stacked */
 .st-key-panel-summary [data-testid="stElementContainer"]:has(.stButton) {flex: 0 1 12rem; width: 12rem;}
 .st-key-panel-summary .stButton button {width: 100%;}
+/* Sandbox mode profile panel: the reset button keeps its full label when the panel is narrow */
+.st-key-panel-inputs [data-testid="stColumn"]:has(.stButton) {flex: 0 0 auto; width: auto;}
+.st-key-panel-inputs [data-testid="stColumn"]:has(h3) {flex: 1 1 0; min-width: 0;}
 
 .next-step {background: var(--card); border: 1px solid var(--line); border-left: 6px solid var(--accent); border-radius: 4px;
             padding: 1rem 1.25rem; margin-bottom: 0.5rem; color: var(--ink); --accent: var(--blue);}
@@ -195,7 +198,11 @@ def rates_by_year(years, group):
 
 def pct_span(match):
     text = match.group(0)
-    sign_class = 'stat-pct-down' if text.startswith('-') else 'stat-pct-up' if text.startswith('+') else 'stat-pct-nosign'
+    # a value that rounds to zero (+0.00, -0.00, +0%) is coloured like an unsigned number
+    if float(text.rstrip('%')) == 0:
+        sign_class = 'stat-pct-nosign'
+    else:
+        sign_class = 'stat-pct-down' if text.startswith('-') else 'stat-pct-up' if text.startswith('+') else 'stat-pct-nosign'
     return f'<span class="stat-pct {sign_class}">{text}</span>'
 
 def stat(label, value, note='', kind=''):
@@ -323,7 +330,7 @@ def overview_page():
     with panel('summary'):
         buttons = panel_header('What this shows')
         buttons.button('Open the review list', on_click=go_to, args=('Districts needing attention',), type='primary')
-        buttons.button('Check a district profile', on_click=go_to, args=('Sandbox mode',))
+        buttons.button('Sandbox mode', on_click=go_to, args=('Sandbox mode',))
         st.markdown(
             f'- {crime_name} cases {"fell" if cases_2023 < cases_2016 else "rose"} from {cases_2016:,.0f} in 2016 to {cases_2023:,.0f} in 2023.\n'
             f'- {highest_state["state"]} has the highest rate in 2023 ({highest_state["rate"]:.2f} per 1,000 people).\n'
@@ -555,8 +562,10 @@ def profile_check_page():
         header_buttons.button(f'Reset to {name}', on_click=reset_profile, args=(name,))
         st.caption('Each value is limited to the range seen across the 131 districts.')
         edited = {}
-        columns = st.columns(2)
         for i, (feature, (label, kind_of_value, step, number_format)) in enumerate(PROFILE_INPUTS.items()):
+            # a new row for every two inputs; bottom alignment keeps the boxes in a row level when one label wraps
+            if i % 2 == 0:
+                columns = st.columns(2, vertical_alignment='bottom')
             low, high, value = ranges[feature]['min'], ranges[feature]['max'], profile[feature]
             if kind_of_value == 'population':
                 low, high, value = np.exp(low), np.exp(high), np.exp(value)
@@ -572,7 +581,7 @@ def profile_check_page():
                 entered = entered / 100
             edited[feature] = entered
         states = cross_district['states']
-        edited['state'] = columns[0].selectbox('State', states, index=states.index(profile['state']), key=f'check_state_{name}')
+        edited['state'] = st.columns(2)[0].selectbox('State', states, index=states.index(profile['state']), key=f'check_state_{name}')
 
     original_row = districts.set_index('district').loc[[name], cross_district['features']]
     edited_row = pd.DataFrame([edited])[cross_district['features']]
