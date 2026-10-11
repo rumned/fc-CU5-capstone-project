@@ -8,7 +8,7 @@ import re
 st.set_page_config(page_title='District Crime Viewer', page_icon='🧭', layout='wide')
 
 CRIMES = {'assault': 'Assault crime', 'property': 'Property crime'}
-PAGES = ['Overview', 'Districts needing attention', 'District profile', 'Profile check', 'About the data and models']
+PAGES = ['Overview', 'Districts needing attention', 'District profile', 'Sandbox mode', 'About the data and models']
 STATUSES = ['Attention', 'Monitor', 'Normal']
 STATUS_CLASSES = {'Attention': 'status-review', 'Monitor': 'status-monitor', 'Normal': 'status-noflag'}
 
@@ -82,7 +82,8 @@ st.markdown("""
 .stat-fill {background: var(--accent); border-color: var(--accent);}
 .stat-fill .stat-label, .stat-fill .stat-value, .stat-fill .stat-note {color: #ffffff;}
 .stat-pct-up {color: var(--red); font-weight: 700;}
-.stat-pct-down {color: var(--light-blue); font-weight: 700;}
+.stat-pct-down {color: var(--blue); font-weight: 700;}
+.stat-pct-nosign {color: var(--teal); font-weight: 700;}
 /* cards in one row take the height of the tallest card */
 [data-testid="stColumn"]:has(> .stVerticalBlock > [data-testid="stElementContainer"] .stat) > .stVerticalBlock {height: 100%;}
 .stVerticalBlock > [data-testid="stElementContainer"]:has(.stat) {flex: 1 1 auto;}
@@ -121,6 +122,7 @@ button[data-testid="stBaseButton-secondary"]:hover {background: var(--teal-ink);
 .next-step.stat-monitor {--accent: var(--orange);}
 .next-step p {margin: 0.25rem 0 0 0; max-width: 75ch; line-height: 1.5;}
 .small-note {font-size: 0.86rem; color: var(--band-text); max-width: 75ch;}
+div[class*="st-key-panel-"] .small-note {color: var(--muted);}
 </style>
 """, unsafe_allow_html=True)
 
@@ -193,11 +195,12 @@ def rates_by_year(years, group):
 
 def pct_span(match):
     text = match.group(0)
-    sign_class = 'stat-pct-down' if text.startswith('-') else 'stat-pct-up'
+    sign_class = 'stat-pct-down' if text.startswith('-') else 'stat-pct-up' if text.startswith('+') else 'stat-pct-nosign'
     return f'<span class="stat-pct {sign_class}">{text}</span>'
 
 def stat(label, value, note='', kind=''):
-    note = re.sub(r'[+-]?\d+(?:\.\d+)?%', pct_span, note)
+    # signed numbers, with or without %, and unsigned percentages
+    note = re.sub(r'(?<![\w.])[+-]\d+(?:\.\d+)?%?|(?<![\w.])\d+(?:\.\d+)?%', pct_span, note)
     return (f'<div class="stat {kind}"><div class="stat-label">{label}</div>'
             f'<div class="stat-value">{value}</div><div class="stat-note">{note}</div></div>')
 
@@ -285,7 +288,9 @@ def overview_page():
         st.markdown(
             '<p class="page-lead">Crime rates depend a lot on what a district is like: larger, richer districts '
             'record more crime per person. This tool compares each district with the rate expected for districts '
-            'with a similar profile, checks whether its crime is rising, and helps you decide where to look first.</p>',
+            'with a similar profile, checks whether its crime is rising, and helps you decide where to look first. '
+            'The rates below are recorded cases per 1,000 residents, summed across all districts. The district counts '
+            'use the thresholds under Flag settings in the sidebar.</p>',
             unsafe_allow_html=True)
         show_stats([
             (f'{crime_name} per 1,000 people, 2023', f'{rate_2023:.2f}', f'{signed((rate_2023 / rate_2022 - 1) * 100)} from 2022'),
@@ -318,7 +323,7 @@ def overview_page():
     with panel('summary'):
         buttons = panel_header('What this shows')
         buttons.button('Open the review list', on_click=go_to, args=('Districts needing attention',), type='primary')
-        buttons.button('Check a district profile', on_click=go_to, args=('Profile check',))
+        buttons.button('Check a district profile', on_click=go_to, args=('Sandbox mode',))
         st.markdown(
             f'- {crime_name} cases {"fell" if cases_2023 < cases_2016 else "rose"} from {cases_2016:,.0f} in 2016 to {cases_2023:,.0f} in 2023.\n'
             f'- {highest_state["state"]} has the highest rate in 2023 ({highest_state["rate"]:.2f} per 1,000 people).\n'
@@ -335,7 +340,9 @@ def review_page():
         st.markdown(
             f'<p class="page-lead">Districts whose {crime_name.lower()} rate is higher than expected for their profile, '
             'or showing rising crime rate, are flagged here. Use the list to choose districts for a closer look, then open a district '
-            'profile to see why it was flagged.</p>', unsafe_allow_html=True)
+            'profile to see why it was flagged. The expected rate is the 2020–2023 average that the cross-district model '
+            'predicts for a district’s profile, using a model trained without that district. The thresholds are set under '
+            'Flag settings in the sidebar.</p>', unsafe_allow_html=True)
         show_stats([(status, counts.get(status, 0), f'of {len(table)} districts',
                      'stat-fill ' + STATUS_CLASSES[status].replace('status', 'stat')) for status in STATUSES])
 
@@ -426,7 +433,11 @@ def profile_page():
     district_names = sorted(districts['district'])
     with band():
         st.title('District profile')
-        st.markdown('<p class="page-lead">View the profile of each district.</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="page-lead">View the profile of each district. The 2020–2023 average and the 2023 rate are recorded '
+            'cases per 1,000 residents. The expected rate comes from the cross-district model trained without this district, '
+            'and the 2024 prediction comes from the year-ahead model run on the district’s 2024 profile.</p>',
+            unsafe_allow_html=True)
         pick, _ = st.columns([1, 2])
         name = pick.selectbox('District', district_names, index=district_names.index(st.session_state['selected_district']),
                               format_func=district_label, key='profile_district', on_change=remember_district, args=('profile_district',))
@@ -527,22 +538,24 @@ def profile_check_page():
         st.title('Sandbox mode: crime rate prediction')
         st.markdown(
             '<p class="page-lead">Adjust each district data to see how changes affect crime rate predictions.</br>'
-            'Parameters are customizable below.</p>', unsafe_allow_html=True)
+            'Parameters are customizable on the right. The typical rate is the cross-district model’s prediction for the edited '
+            'profile. The change is measured against the same model’s prediction for the district’s current profile, and '
+            'the percentage is the share of districts whose actual 2020–2023 average is lower.</p>', unsafe_allow_html=True)
         pick, _ = st.columns([1, 2])
         name = pick.selectbox('Start from', district_names, index=district_names.index(st.session_state['selected_district']),
                               format_func=district_label, key='check_district', on_change=remember_district, args=('check_district',))
-        # the results are shown in the band, above the inputs, so they stay in view while the profile is edited
-        results_area = st.container()
 
     profile = districts.set_index('district').loc[name]
     ranges = cross_district['ranges']
 
-    with panel('inputs'):
+    # the results and the inputs sit side by side; on narrow screens the columns stack with the results first
+    results_column, inputs_column = st.columns(2)
+    with inputs_column, panel('inputs'):
         header_buttons = panel_header('Profile')
         header_buttons.button(f'Reset to {name}', on_click=reset_profile, args=(name,))
         st.caption('Each value is limited to the range seen across the 131 districts.')
         edited = {}
-        columns = st.columns(3)
+        columns = st.columns(2)
         for i, (feature, (label, kind_of_value, step, number_format)) in enumerate(PROFILE_INPUTS.items()):
             low, high, value = ranges[feature]['min'], ranges[feature]['max'], profile[feature]
             if kind_of_value == 'population':
@@ -551,7 +564,7 @@ def profile_check_page():
                 low, high, value = low * 100, high * 100, value * 100
             # the saved CSV and the model ranges can differ in the last decimal place, so the start value is kept inside the range
             value = min(max(value, low), high)
-            entered = columns[i % 3].number_input(label, float(low), float(high), float(value), step=step, format=number_format,
+            entered = columns[i % 2].number_input(label, float(low), float(high), float(value), step=step, format=number_format,
                                                   key=f'check_{feature}_{name}')
             if kind_of_value == 'population':
                 entered = np.log(entered)
@@ -563,7 +576,7 @@ def profile_check_page():
 
     original_row = districts.set_index('district').loc[[name], cross_district['features']]
     edited_row = pd.DataFrame([edited])[cross_district['features']]
-    with results_area:
+    with results_column, panel('results'):
         st.subheader('Typical rate for this profile', anchor=False)
         items = []
         for crime_type, label in CRIMES.items():
@@ -592,7 +605,9 @@ def about_page():
         st.markdown(
             '<p class="page-lead">Who this is for: crime-prevention planners, for example state police planning units or '
             'local safe-city programme teams, who decide which districts to look at first. The models give an expected '
-            'rate and an outlook; the decision about what to do in a district stays with the planner.</p>',
+            'rate and an outlook; the decision about what to do in a district stays with the planner. The test scores below '
+            'come from the project notebook: the cross-district model was tested on 10 random splits of the districts, and '
+            'the year-ahead model was trained on 2022 and tested on 2023.</p>',
             unsafe_allow_html=True)
 
     with panel('cross'):
@@ -643,4 +658,4 @@ def about_page():
 
 
 {'Overview': overview_page, 'Districts needing attention': review_page, 'District profile': profile_page,
- 'Profile check': profile_check_page, 'About the data and models': about_page}[page]()
+ 'Sandbox mode': profile_check_page, 'About the data and models': about_page}[page]()

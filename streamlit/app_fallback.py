@@ -1,0 +1,660 @@
+import altair as alt
+import joblib
+import numpy as np
+import pandas as pd
+import streamlit as st
+import re
+
+st.set_page_config(page_title='District Crime Viewer', page_icon='🧭', layout='wide')
+
+CRIMES = {'assault': 'Assault crime', 'property': 'Property crime'}
+PAGES = ['Overview', 'Districts needing attention', 'District profile', 'Sandbox mode', 'About the data and models']
+STATUSES = ['Attention', 'Monitor', 'Normal']
+STATUS_CLASSES = {'Attention': 'status-review', 'Monitor': 'status-monitor', 'Normal': 'status-noflag'}
+
+# data colours: red, light orange and dark blue, used for statuses and chart series
+RED, ORANGE, BLUE = '#c8102e', '#E0A124', '#12306b'
+STATUS_COLOURS = [RED, ORANGE, BLUE]
+LINE_COLOURS = [RED, ORANGE, BLUE]
+REFERENCE_GREY = '#8a909a'
+LIGHT_BLUE = '#8B93FC'
+TEAL = '#5bbcbe'
+
+# inputs of the cross-district model, with how they are shown in the app.
+# shares are stored as fractions and shown as percentages
+PROFILE_INPUTS = {
+    'log_pop': ('Population (thousands)', 'population', 10.0, '%.1f'),
+    'students_pc': ('Students per 1,000 people', 'plain', 5.0, '%.1f'),
+    'schools_pc': ('Schools per 1,000 people', 'plain', 0.05, '%.2f'),
+    'income_median': ('Median household income (RM a month)', 'plain', 100.0, '%.0f'),
+    'income_mean': ('Mean household income (RM a month)', 'plain', 100.0, '%.0f'),
+    'poverty_absolute': ('Absolute poverty (% of households)', 'plain', 0.5, '%.1f'),
+    'poverty_relative': ('Relative poverty (% of households)', 'plain', 0.5, '%.1f'),
+    'gini': ('Income inequality (gini, 0 to 1)', 'plain', 0.01, '%.3f'),
+    'piped_water': ('Households with piped water (%)', 'plain', 1.0, '%.1f'),
+    'young_male_share': ('Males aged 15–29 (% of population)', 'share', 0.5, '%.1f'),
+    'age65_share': ('People aged 65 and over (% of population)', 'share', 0.5, '%.1f'),
+    'male_share': ('Males (% of population)', 'share', 0.5, '%.1f'),
+}
+
+# page layout: a dark band at the top of each page (st.container key 'band') and white panels below it
+# (keys starting with 'panel-'). Streamlit adds the class st-key-<key> to a keyed container.
+st.markdown("""
+<style>
+:root {
+  --band: #232529; --band-card: #2d3034; --band-line: #3f434a; --band-text: #c3c8cf;
+  --page: #eceef1; --card: #ffffff; --line: #dcdfe4; --ink: #1e2126; --muted: #5c6370;
+  --teal: #5bbcbe; --teal-ink: #23797c;
+  --red: #c8102e; --orange: #E0A124; --blue: #12306b; --light-blue:#8B93FC;
+  --gutter: 2.5rem;
+}
+@media (max-width: 640px) {:root {--gutter: 1rem;}}
+[data-testid="stHeader"] {background: var(--card); border-bottom: 1px solid var(--line);}
+/* app title in the header bar; moved right when the sidebar is collapsed so it clears the expand button */
+[data-testid="stHeader"]::before {content: 'District Crime Viewer'; position: absolute; left: 1.5rem; top: 50%;
+  transform: translateY(-50%); font-weight: 600; color: var(--ink); font-size: 1.25rem;}
+[data-testid="stHeader"]:has([data-testid="stExpandSidebarButton"])::before {left: 3.75rem;}
+.block-container {max-width: none; padding: 3.75rem var(--gutter) 4rem var(--gutter);}
+
+/* dark band */
+.stVerticalBlock.st-key-band {background: var(--band); margin: -1rem calc(-1 * var(--gutter)) 0.6rem; width: calc(100% + 2 * var(--gutter)); max-width: none;
+              padding: 2rem var(--gutter) 2.2rem; gap: 1.1rem;}
+.st-key-band h1 {color: #ffffff; font-size: 2.3rem; font-weight: 700; letter-spacing: -0.02em; padding: 0;}
+.st-key-band h3 {color: #ffffff; font-size: 1.15rem; font-weight: 700; padding: 0;}
+.st-key-band [data-testid="stWidgetLabel"] p {color: var(--band-text);}
+.st-key-band [data-testid="stCaptionContainer"] {color: var(--band-text);}
+[data-testid="stMain"] .st-key-band [data-testid="stExpander"] details {background: var(--band-card); border-color: var(--band-line);}
+.st-key-band [data-testid="stExpander"] summary {color: #ffffff;}
+.page-lead {font-size: 1.05rem; color: var(--band-text); max-width: 70ch; margin: 0; line-height: 1.55;}
+.district-heading {font-size: 1.05rem; color: var(--band-text); margin: 0; line-height: 1.9;}
+.district-heading .status {margin-left: 0.35rem;}
+
+/* number tiles in the band */
+.stat {background: #f0f2f6; border: 1px solid var(--band-line);
+       border-radius: 6px; padding: 0.85rem 1.1rem 1rem; min-height: 8.25rem; --accent: var(--band-line);}
+.stat-review {--accent: var(--red);}
+.stat-monitor {--accent: var(--orange);}
+.stat-noflag {--accent: var(--blue);}
+.stat-label {font-size: 1rem; color: var(--blue);}
+.stat-value {font-size: 2.1rem; font-weight: 700; color: var(--ink); line-height: 1.2; letter-spacing: -0.02em;
+             font-variant-numeric: tabular-nums; margin-top: 0.2rem;}
+.stat-note {font-size: 1rem; color: var(--muted);}
+.stat-fill {background: var(--accent); border-color: var(--accent);}
+.stat-fill .stat-label, .stat-fill .stat-value, .stat-fill .stat-note {color: #ffffff;}
+.stat-pct-up {color: var(--red); font-weight: 700;}
+.stat-pct-down {color: var(--blue); font-weight: 700;}
+.stat-pct-nosign {color: var(--teal); font-weight: 700;}
+/* cards in one row take the height of the tallest card */
+[data-testid="stColumn"]:has(> .stVerticalBlock > [data-testid="stElementContainer"] .stat) > .stVerticalBlock {height: 100%;}
+.stVerticalBlock > [data-testid="stElementContainer"]:has(.stat) {flex: 1 1 auto;}
+.stMarkdown:has(.stat), .stMarkdown:has(.stat) > div {height: 100%;}
+[data-testid="stMarkdownContainer"]:has(> .stat) {height: 100%; margin-bottom: 0;}
+.stat {height: 100%; box-sizing: border-box;}
+
+/* status labels */
+.status {display: inline-block; padding: 0.1rem 0.6rem; border-radius: 3px; font-size: 0.85rem; font-weight: 600; color: #ffffff;}
+.status-review {background: var(--red);}
+.status-monitor {background: var(--orange);}
+.status-noflag {background: var(--blue);}
+/* status filter tags on the Districts needing attention page, in the same colours as the status labels */
+.st-key-status_filter [data-tag][aria-label="Attention"], .st-key-status_filter span[data-baseweb="tag"]:has(span[title="Attention"]) {background: var(--red);}
+.st-key-status_filter [data-tag][aria-label="Monitor"], .st-key-status_filter span[data-baseweb="tag"]:has(span[title="Monitor"]) {background: var(--orange);}
+.st-key-status_filter [data-tag][aria-label="Normal"], .st-key-status_filter span[data-baseweb="tag"]:has(span[title="Normal"]) {background: var(--blue);}
+
+/* white panels */
+div[class*="st-key-panel-"] {background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+                             padding: 1.3rem 1.5rem 1.4rem;}
+/* panels side by side in columns take the height of the tallest one */
+[data-testid="stColumn"] > .stVerticalBlock > [data-testid="stLayoutWrapper"]:has(> div[class*="st-key-panel-"]) {flex: 1 1 auto;}
+div[class*="st-key-panel-"] h3 {font-size: 1.15rem; font-weight: 700; padding: 0; color: var(--ink);}
+[data-testid="stMain"] [data-testid="stExpander"] details {background: var(--card); border-color: var(--line);}
+
+/* outlined buttons, as in the panel headers of the reference layout */
+button[data-testid="stBaseButton-secondary"] {background: transparent; border: 1px solid var(--teal-ink); color: var(--teal-ink);}
+button[data-testid="stBaseButton-secondary"]:hover {background: var(--teal-ink); border-color: var(--teal-ink); color: #ffffff;}
+/* the two buttons in the Overview summary panel have the same width, side by side or stacked */
+.st-key-panel-summary [data-testid="stElementContainer"]:has(.stButton) {flex: 0 1 12rem; width: 12rem;}
+.st-key-panel-summary .stButton button {width: 100%;}
+
+.next-step {background: var(--card); border: 1px solid var(--line); border-left: 6px solid var(--accent); border-radius: 4px;
+            padding: 1rem 1.25rem; margin-bottom: 0.5rem; color: var(--ink); --accent: var(--blue);}
+.next-step.stat-review {--accent: var(--red);}
+.next-step.stat-monitor {--accent: var(--orange);}
+.next-step p {margin: 0.25rem 0 0 0; max-width: 75ch; line-height: 1.5;}
+.small-note {font-size: 0.86rem; color: var(--band-text); max-width: 75ch;}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ---------- loading ----------
+
+@st.cache_resource
+def load_bundle():
+    return joblib.load('crime_model.joblib')
+
+
+@st.cache_data
+def load_tables():
+    districts = pd.read_csv('app_districts.csv')
+    years = pd.read_csv('app_district_years.csv')
+    return districts, years
+
+
+bundle = load_bundle()
+districts, years = load_tables()
+year_ahead = bundle['year_ahead']
+cross_district = bundle['cross_district']
+
+
+@st.cache_data
+def outlook_2024(districts):
+    # runs the year-ahead models on each district's 2024 profile
+    features_2024 = districts[[feature + '_2024' for feature in year_ahead['features']]]
+    features_2024.columns = year_ahead['features']
+    return pd.DataFrame({crime: year_ahead['models'][f'{crime}_per_1000'].predict(features_2024) for crime in CRIMES},
+                        index=districts['district'])
+
+
+@st.cache_data
+def cluster_names(districts):
+    # the k-means clusters ordered by average population: smallest first
+    order = districts.groupby('cluster')['log_pop'].mean().sort_values().index
+    return dict(zip(order, ['Smaller districts', 'Mid-sized districts', 'Larger districts']))
+
+
+@st.cache_data
+def district_table(districts, years, crime, above_pct, rising_pct, min_cases):
+    # one row per district with the rates, the expected rate, the change and the flags for one crime type
+    rates = years[years['year'].between(2020, 2023)].pivot(index='district', columns='year', values=f'{crime}_per_1000')
+    cases_2023 = years[years['year'] == 2023].set_index('district')[f'crimes_{crime}']
+    table = districts[['district', 'state', 'cluster']].copy()
+    table['average'] = districts[f'{crime}_avg']
+    table['expected'] = districts[f'{crime}_expected']
+    table['gap_pct'] = (table['average'] / table['expected'] - 1) * 100
+    table['rate_2023'] = table['district'].map(rates[2023])
+    table['earlier_average'] = table['district'].map(rates[[2020, 2021, 2022]].mean(axis=1))
+    table['change_pct'] = (table['rate_2023'] / table['earlier_average'] - 1) * 100
+    table['cases_2023'] = table['district'].map(cases_2023)
+    table['outlook_2024'] = table['district'].map(outlook_2024(districts)[crime])
+    table['above_expected'] = table['gap_pct'] >= above_pct
+    table['rising'] = (table['change_pct'] >= rising_pct) & (table['cases_2023'] >= min_cases)
+    table['status'] = np.select([table['above_expected'] & table['rising'], table['above_expected'] | table['rising']],
+                                ['Attention', 'Monitor'], 'Normal')
+    return table
+
+
+@st.cache_data
+def rates_by_year(years, group):
+    # crimes per 1,000 people per year, for the whole country (group=None) or for each state
+    keys = ['year'] if group is None else [group, 'year']
+    totals = years.groupby(keys)[['crimes_assault', 'crimes_property', 'population']].sum(min_count=1).reset_index()
+    for crime in CRIMES:
+        totals[f'{crime}_rate'] = totals[f'crimes_{crime}'] / totals['population']
+    return totals
+
+def pct_span(match):
+    text = match.group(0)
+    sign_class = 'stat-pct-down' if text.startswith('-') else 'stat-pct-up' if text.startswith('+') else 'stat-pct-nosign'
+    return f'<span class="stat-pct {sign_class}">{text}</span>'
+
+def stat(label, value, note='', kind=''):
+    # signed numbers, with or without %, and unsigned percentages
+    note = re.sub(r'(?<![\w.])[+-]\d+(?:\.\d+)?%?|(?<![\w.])\d+(?:\.\d+)?%', pct_span, note)
+    return (f'<div class="stat {kind}"><div class="stat-label">{label}</div>'
+            f'<div class="stat-value">{value}</div><div class="stat-note">{note}</div></div>')
+
+
+def show_stats(items):
+    for column, item in zip(st.columns(len(items)), items):
+        column.markdown(stat(*item), unsafe_allow_html=True)
+
+
+def status_badge(status):
+    return f'<span class="status {STATUS_CLASSES[status]}">{status}</span>'
+
+
+def signed(value, decimals=0, suffix='%'):
+    return f'{value:+.{decimals}f}{suffix}'
+
+
+def band():
+    # the dark area at the top of each page
+    return st.container(key='band')
+
+
+def panel(name):
+    # a white panel; the key gives it the CSS class st-key-panel-<name>
+    return st.container(key=f'panel-{name}')
+
+
+def panel_header(title):
+    # panel title on the left, and a right-aligned row for the panel's buttons
+    left, right = st.columns([3, 2], vertical_alignment='center')
+    left.subheader(title, anchor=False)
+    return right.container(horizontal=True, horizontal_alignment='right')
+
+
+def go_to(page, district=None):
+    # used as a button callback, so the page changes before the next run
+    st.session_state['page'] = page
+    if district is not None:
+        st.session_state['selected_district'] = district
+
+
+def remember_district(widget_key):
+    # keeps the chosen district when the user moves to another page
+    st.session_state['selected_district'] = st.session_state[widget_key]
+
+
+def district_label(name):
+    return f"{name}, {districts.set_index('district').loc[name, 'state']}"
+
+
+# ---------- sidebar ----------
+
+if 'page' not in st.session_state:
+    st.session_state['page'] = PAGES[0]
+if 'selected_district' not in st.session_state:
+    st.session_state['selected_district'] = sorted(districts['district'])[0]
+
+with st.sidebar:
+    st.markdown('# District Crime Viewer')
+    st.caption('For crime-prevention planners and policy makers.')
+    page = st.radio('Page', PAGES, key='page')
+    crime = st.radio('Crime type', list(CRIMES), format_func=CRIMES.get, key='crime')
+    with st.expander('Flag settings'):
+        above_pct = st.slider('Above expected by at least (%)', 5, 100, 25, step=5)
+        rising_pct = st.slider('2023 rate above the 2020–2022 average by at least (%)', 5, 100, 15, step=5)
+        min_cases = st.number_input('Minimum cases in 2023 for a rising flag', 0, 200, 20, step=5)
+    st.caption('Data: crime, population, household income, poverty, inequality, amenities, schools and enrolment '
+               'by district, 2016–2024.')
+
+table = district_table(districts, years, crime, above_pct, rising_pct, min_cases)
+names = cluster_names(districts)
+crime_name = CRIMES[crime]
+
+
+# ---------- overview ----------
+
+def overview_page():
+    national = rates_by_year(years, None).set_index('year')
+    rate_2023, rate_2022 = national.loc[2023, f'{crime}_rate'], national.loc[2022, f'{crime}_rate']
+    cases_2023, cases_2016 = national.loc[2023, f'crimes_{crime}'], national.loc[2016, f'crimes_{crime}']
+    counts = table['status'].value_counts()
+
+    with band():
+        st.title('Summary view')
+        st.markdown(
+            '<p class="page-lead">Crime rates depend a lot on what a district is like: larger, richer districts '
+            'record more crime per person. This tool compares each district with the rate expected for districts '
+            'with a similar profile, checks whether its crime is rising, and helps you decide where to look first. '
+            'The rates below are recorded cases per 1,000 residents, summed across all districts. The district counts '
+            'use the thresholds under Flag settings in the sidebar.</p>',
+            unsafe_allow_html=True)
+        show_stats([
+            (f'{crime_name} per 1,000 people, 2023', f'{rate_2023:.2f}', f'{signed((rate_2023 / rate_2022 - 1) * 100)} from 2022'),
+            (f'{crime_name} cases, 2023', f'{cases_2023:,.0f}', f'{signed((cases_2023 / cases_2016 - 1) * 100)} from 2016'),
+            ('Districts needing attention', counts.get('Attention', 0), 'crime above expected and rising', 'stat-fill stat-review'),
+            ('Districts to monitor', counts.get('Monitor', 0), 'crime above expected', 'stat-fill stat-monitor'),
+        ])
+
+    left, right = st.columns(2)
+    with left, panel('cases'):
+        st.subheader('Cases per year', anchor=False)
+        cases = national.reset_index()[['year', f'crimes_{crime}']].rename(columns={f'crimes_{crime}': 'cases'})
+        chart = alt.Chart(cases).mark_line(point=alt.OverlayMarkDef(color=BLUE, size=65), color=TEAL, strokeWidth=3.5).encode(
+            x=alt.X('year:O', title=None), y=alt.Y('cases:Q', title='Cases'),
+            tooltip=['year', alt.Tooltip('cases:Q', format=',')])
+        st.altair_chart(chart.properties(background='transparent'), height=440)
+    with right, panel('states'):
+        st.subheader('Rate by state, 2023', anchor=False)
+        states = rates_by_year(years, 'state')
+        states = states[states['year'] == 2023][['state', f'{crime}_rate']].rename(columns={f'{crime}_rate': 'rate'})
+        bars = alt.Chart(states).mark_bar(color=REFERENCE_GREY).encode(
+            x=alt.X('rate:Q', title='Per 1,000 people'), y=alt.Y('state:N', sort='-x', title=None),
+            tooltip=['state', alt.Tooltip('rate:Q', format='.2f')])
+        national_line = alt.Chart(pd.DataFrame({'rate': [rate_2023]})).mark_rule(color=BLUE, strokeDash=[5, 3], strokeWidth=2).encode(x='rate:Q')
+        st.altair_chart((bars + national_line).properties(background='transparent'), height=440)
+        st.caption('The dashed line is the national rate.')
+
+    highest_state = states.sort_values('rate').iloc[-1]
+    above = (table['gap_pct'] >= above_pct).sum()
+    with panel('summary'):
+        buttons = panel_header('What this shows')
+        buttons.button('Open the review list', on_click=go_to, args=('Districts needing attention',), type='primary')
+        buttons.button('Check a district profile', on_click=go_to, args=('Sandbox mode',))
+        st.markdown(
+            f'- {crime_name} cases {"fell" if cases_2023 < cases_2016 else "rose"} from {cases_2016:,.0f} in 2016 to {cases_2023:,.0f} in 2023.\n'
+            f'- {highest_state["state"]} has the highest rate in 2023 ({highest_state["rate"]:.2f} per 1,000 people).\n'
+            f'- {above} of 131 districts recorded at least {above_pct}% more {crime_name.lower()} in 2020–2023 than '
+            f'districts with a similar profile.')
+
+
+# ---------- districts to review ----------
+
+def review_page():
+    counts = table['status'].value_counts()
+    with band():
+        st.title('Districts needing attention')
+        st.markdown(
+            f'<p class="page-lead">Districts whose {crime_name.lower()} rate is higher than expected for their profile, '
+            'or showing rising crime rate, are flagged here. Use the list to choose districts for a closer look, then open a district '
+            'profile to see why it was flagged. The expected rate is the 2020–2023 average that the cross-district model '
+            'predicts for a district’s profile, using a model trained without that district. The thresholds are set under '
+            'Flag settings in the sidebar.</p>', unsafe_allow_html=True)
+        show_stats([(status, counts.get(status, 0), f'of {len(table)} districts',
+                     'stat-fill ' + STATUS_CLASSES[status].replace('status', 'stat')) for status in STATUSES])
+
+    with st.expander('How the flags work'):
+        st.markdown(
+            f'- **Expected rate**: the 2020–2023 average rate that the cross-district model predicts for a district with '
+            f'this population, income, poverty, education and age profile and state. Each district’s expected rate '
+            f'comes from a model trained without that district.\n'
+            f'- **Above expected**: the 2020–2023 average is at least {above_pct}% above the expected rate.\n'
+            f'- **Rising**: the 2023 rate is at least {rising_pct}% above the district’s 2020–2022 average, with at '
+            f'least {min_cases} cases in 2023, so that a few extra cases in a small district do not set the flag.\n'
+            f'- **Attention**: Crime reported is above expected and rising. **Monitor**: Crime reported is above expected but not rising sharply. The thresholds can be changed under Flag settings in the sidebar.')
+
+    with panel('scatter'):
+        st.subheader('Actual compared with expected, 2020–2023', anchor=False)
+        status_scale = alt.Scale(domain=STATUSES, range=STATUS_COLOURS)
+        limit = float(max(table['average'].max(), table['expected'].max()) * 1.05)
+        points = alt.Chart(table).mark_circle(size=80, opacity=0.9).encode(
+            x=alt.X('expected:Q', title='Expected rate per 1,000 people', scale=alt.Scale(domain=[0, limit])),
+            y=alt.Y('average:Q', title='Actual average rate per 1,000 people', scale=alt.Scale(domain=[0, limit])),
+            color=alt.Color('status:N', scale=status_scale, title='Status'),
+            tooltip=['district', 'state', 'status', alt.Tooltip('average:Q', format='.2f', title='actual'),
+                     alt.Tooltip('expected:Q', format='.2f'), alt.Tooltip('gap_pct:Q', format='+.0f', title='gap (%)')])
+        diagonal = alt.Chart(pd.DataFrame({'x': [0, limit], 'y': [0, limit]})).mark_line(color=REFERENCE_GREY, strokeDash=[4, 3]).encode(x='x', y='y')
+        st.altair_chart((diagonal + points).properties(background='transparent'))
+        st.caption('Districts above the dashed line recorded more crime than expected for their profile.')
+
+    with panel('list'):
+        header_buttons = panel_header('List')
+        filter_left, filter_right = st.columns(2)
+        chosen_statuses = filter_left.multiselect('Status', STATUSES, default=['Attention', 'Monitor'], key='status_filter')
+        chosen_states = filter_right.multiselect('State', sorted(table['state'].unique()), placeholder='All states')
+        shown = table[table['status'].isin(chosen_statuses)]
+        if chosen_states:
+            shown = shown[shown['state'].isin(chosen_states)]
+        shown = shown.assign(status_order=shown['status'].map({status: i for i, status in enumerate(STATUSES)}))
+        shown = shown.sort_values(['status_order', 'gap_pct'], ascending=[True, False])
+        columns = ['district', 'state', 'status', 'average', 'expected', 'gap_pct', 'rate_2023', 'change_pct', 'cases_2023', 'outlook_2024']
+
+        if shown.empty:
+            st.info('No districts match these filters. Add a status or a state, or lower the thresholds under Flag settings.')
+            return
+        header_buttons.download_button('Download this list (CSV)', shown[columns].to_csv(index=False),
+                                       file_name=f'districts_to_review_{crime}.csv', mime='text/csv')
+        st.dataframe(shown[columns], hide_index=True, column_config={
+            'district': 'District', 'state': 'State', 'status': 'Status',
+            'average': st.column_config.NumberColumn('2020–2023 average', format='%.2f'),
+            'expected': st.column_config.NumberColumn('Expected', format='%.2f'),
+            'gap_pct': st.column_config.NumberColumn('Gap (%)', format='%+.0f'),
+            'rate_2023': st.column_config.NumberColumn('2023 rate', format='%.2f'),
+            'change_pct': st.column_config.NumberColumn('2023 vs 2020–2022 (%)', format='%+.0f'),
+            'cases_2023': st.column_config.NumberColumn('Cases 2023', format='%d'),
+            'outlook_2024': st.column_config.NumberColumn('2024 prediction', format='%.2f'),
+        })
+        st.caption(f'Rates are {crime_name.lower()} cases per 1,000 people.')
+
+        action_left, action_right, _ = st.columns([1.4, 1, 1.6], vertical_alignment='bottom')
+        chosen = action_left.selectbox('District', shown['district'], format_func=district_label)
+        action_right.button('Open district profile', on_click=go_to, args=('District profile', chosen))
+
+
+# ---------- district profile ----------
+
+def similar_districts(name, count=5):
+    # districts with the closest profile: distance between the standardised model inputs (state left out)
+    features = list(PROFILE_INPUTS)
+    values = districts.set_index('district')[features]
+    standardised = (values - values.mean()) / values.std()
+    distance = np.sqrt(((standardised - standardised.loc[name]) ** 2).sum(axis=1))
+    return distance.drop(name).sort_values().head(count).index
+
+
+def next_step_text(row):
+    if row['status'] == 'Attention':
+        return ('Crime here is above the expected level and rising. Put this district on the review shortlist: '
+                'check local factors that the data does not cover, such as tourism, commuters, nightlife or specific '
+                'hotspots, and whether current prevention work matches the trend.')
+    if row['above_expected']:
+        return ('Crime here is above the expected level but not rising sharply. Keep the district on the watch list and '
+                'compare it with the similar districts below to see what differs.')
+    if row['rising']:
+        return ('Crime here is not above the expected level, but the 2023 rate rose. Check whether the rise '
+                'continues when 2024 crime data is published.')
+    return 'No flag at the current settings. The data does not suggest extra attention for this crime type.'
+
+
+def profile_page():
+    district_names = sorted(districts['district'])
+    with band():
+        st.title('District profile')
+        st.markdown(
+            '<p class="page-lead">View the profile of each district. The 2020–2023 average and the 2023 rate are recorded '
+            'cases per 1,000 residents. The expected rate comes from the cross-district model trained without this district, '
+            'and the 2024 prediction comes from the year-ahead model run on the district’s 2024 profile.</p>',
+            unsafe_allow_html=True)
+        pick, _ = st.columns([1, 2])
+        name = pick.selectbox('District', district_names, index=district_names.index(st.session_state['selected_district']),
+                              format_func=district_label, key='profile_district', on_change=remember_district, args=('profile_district',))
+        row = table.set_index('district').loc[name]
+        profile = districts.set_index('district').loc[name]
+        other = 'property' if crime == 'assault' else 'assault'
+        other_status = district_table(districts, years, other, above_pct, rising_pct, min_cases).set_index('district').loc[name, 'status']
+        st.markdown(
+            f'<p class="district-heading">{profile["state"]}. Profile group: {names[profile["cluster"]].lower()}.<br>'
+            f'{crime_name} {status_badge(row["status"])} &nbsp; {CRIMES[other]} {status_badge(other_status)}</p>',
+            unsafe_allow_html=True)
+
+        test = year_ahead['test_results'].set_index(['target', 'model'])['R2']
+        model_r2 = test.loc[f'{crime}_per_1000'].drop('baseline (2022 rate)').iloc[0]
+        baseline_r2 = test.loc[(f'{crime}_per_1000', 'baseline (2022 rate)')]
+        kind = STATUS_CLASSES[row['status']].replace('status', 'stat')
+        show_stats([
+            ('2020–2023 average', f'{row["average"]:.2f}', 'per 1,000 people', kind),
+            ('Expected for this profile', f'{row["expected"]:.2f}', f'gap {signed(row["gap_pct"])}', kind),
+            ('2023 rate', f'{row["rate_2023"]:.2f}', f'{signed(row["change_pct"])} vs 2020–2022, {row["cases_2023"]:,.0f} cases', kind),
+            ('2024 prediction', f'{row["outlook_2024"]:.2f}', 'year-ahead model', 'stat-quiet'),
+        ])
+
+    kind_class = kind if row['status'] != 'Normal' else ''
+    st.markdown(f'<div class="next-step {kind_class}"><strong>Suggested next step</strong><p>{next_step_text(row)}</p></div>',
+                unsafe_allow_html=True)
+    if row['cases_2023'] < min_cases:
+        st.caption(f'{name} recorded {row["cases_2023"]:.0f} cases in 2023, so its yearly rate can change a lot by chance.')
+
+    left, right = st.columns([1.15, 1])
+    with left, panel('trend'):
+        st.subheader('Rate per year', anchor=False)
+        district_rates = years[(years['district'] == name) & years['year'].between(2020, 2023)][['year', f'{crime}_per_1000']]
+        district_rates = district_rates.rename(columns={f'{crime}_per_1000': 'rate'}).assign(series=name)
+        state_rates = rates_by_year(years, 'state')
+        state_rates = state_rates[(state_rates['state'] == profile['state']) & state_rates['year'].between(2020, 2023)]
+        state_rates = state_rates[['year', f'{crime}_rate']].rename(columns={f'{crime}_rate': 'rate'}).assign(series=f'{profile["state"]} (state)')
+        national = rates_by_year(years, None)
+        national = national[national['year'].between(2020, 2023)][['year', f'{crime}_rate']].rename(columns={f'{crime}_rate': 'rate'}).assign(series='Malaysia')
+        lines = pd.concat([district_rates, state_rates, national])
+        order = [name, f'{profile["state"]} (state)', 'Malaysia']
+        chart = alt.Chart(lines).mark_line(point=True, strokeWidth=2.5).encode(
+            x=alt.X('year:O', title=None), y=alt.Y('rate:Q', title='Per 1,000 people'),
+            color=alt.Color('series:N', scale=alt.Scale(domain=order, range=LINE_COLOURS), title=None, sort=order),
+            tooltip=['series', 'year', alt.Tooltip('rate:Q', format='.2f')])
+        st.altair_chart(chart.properties(background='transparent'))
+        st.caption(f'The 2024 prediction from the year-ahead model is {row["outlook_2024"]:.2f}. In the 2023 test, '
+                   f'using the previous year’s rate was more accurate (R² {baseline_r2:.2f}) than this model '
+                   f'(R² {model_r2:.2f}), so treat the outlook as a rough guide.')
+    with right, panel('similar'):
+        st.subheader('Similar districts', anchor=False)
+        similar = table.set_index('district').loc[similar_districts(name)].reset_index()
+        st.dataframe(similar[['district', 'state', 'average', 'expected', 'status']], hide_index=True,
+                     column_config={'district': 'District', 'state': 'State', 'status': 'Status',
+                                    'average': st.column_config.NumberColumn('2020–2023 average', format='%.2f'),
+                                    'expected': st.column_config.NumberColumn('Expected', format='%.2f')})
+        st.caption('The five districts with the closest population, income, poverty, education and age profile.')
+
+    with panel('compare'):
+        header_buttons = panel_header('Profile compared with all districts')
+        rows = []
+        for feature, (label, kind_of_value, _, _) in PROFILE_INPUTS.items():
+            values = districts[feature]
+            value, median = profile[feature], values.median()
+            if kind_of_value == 'population':
+                value, median = np.exp(value), np.exp(median)
+            if kind_of_value == 'share':
+                value, median = value * 100, median * 100
+            rows.append({'Measure (2022)': label, name: value, 'Median district': median,
+                         'Higher than (% of districts)': (values < profile[feature]).mean() * 100})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, column_config={
+            name: st.column_config.NumberColumn(format='%.2f'),
+            'Median district': st.column_config.NumberColumn(format='%.2f'),
+            'Higher than (% of districts)': st.column_config.ProgressColumn(format='%.0f', min_value=0, max_value=100, color=REFERENCE_GREY)})
+
+        report = (f'# {name}, {profile["state"]}: {crime_name.lower()}\n\n'
+                  f'Status: {row["status"]} (above expected by at least {above_pct}%, rising by at least {rising_pct}%)\n\n'
+                  f'- 2020–2023 average: {row["average"]:.2f} per 1,000 people\n'
+                  f'- Expected for this profile: {row["expected"]:.2f} (gap {signed(row["gap_pct"])})\n'
+                  f'- 2023 rate: {row["rate_2023"]:.2f} ({signed(row["change_pct"])} vs 2020–2022), {row["cases_2023"]:,.0f} cases\n'
+                  f'- 2024 year-ahead model outlook: {row["outlook_2024"]:.2f}\n'
+                  f'- Similar districts: {", ".join(similar["district"])}\n\n'
+                  f'Suggested next step: {next_step_text(row)}\n')
+        header_buttons.download_button('Download district summary', report, file_name=f'{name}_{crime}_summary.md'.replace(' ', '_'))
+
+
+# ---------- profile check ----------
+
+def reset_profile(name):
+    for feature in PROFILE_INPUTS:
+        st.session_state.pop(f'check_{feature}_{name}', None)
+    st.session_state.pop(f'check_state_{name}', None)
+
+
+def profile_check_page():
+    district_names = sorted(districts['district'])
+    with band():
+        st.title('Sandbox mode: crime rate prediction')
+        st.markdown(
+            '<p class="page-lead">Adjust each district data to see how changes affect crime rate predictions.</br>'
+            'Parameters are customizable below. The typical rate is the cross-district model’s prediction for the edited '
+            'profile. The change is measured against the same model’s prediction for the district’s current profile, and '
+            'the percentage is the share of districts whose actual 2020–2023 average is lower.</p>', unsafe_allow_html=True)
+        pick, _ = st.columns([1, 2])
+        name = pick.selectbox('Start from', district_names, index=district_names.index(st.session_state['selected_district']),
+                              format_func=district_label, key='check_district', on_change=remember_district, args=('check_district',))
+        # the results are shown in the band, above the inputs, so they stay in view while the profile is edited
+        results_area = st.container()
+
+    profile = districts.set_index('district').loc[name]
+    ranges = cross_district['ranges']
+
+    with panel('inputs'):
+        header_buttons = panel_header('Profile')
+        header_buttons.button(f'Reset to {name}', on_click=reset_profile, args=(name,))
+        st.caption('Each value is limited to the range seen across the 131 districts.')
+        edited = {}
+        columns = st.columns(3)
+        for i, (feature, (label, kind_of_value, step, number_format)) in enumerate(PROFILE_INPUTS.items()):
+            low, high, value = ranges[feature]['min'], ranges[feature]['max'], profile[feature]
+            if kind_of_value == 'population':
+                low, high, value = np.exp(low), np.exp(high), np.exp(value)
+            if kind_of_value == 'share':
+                low, high, value = low * 100, high * 100, value * 100
+            # the saved CSV and the model ranges can differ in the last decimal place, so the start value is kept inside the range
+            value = min(max(value, low), high)
+            entered = columns[i % 3].number_input(label, float(low), float(high), float(value), step=step, format=number_format,
+                                                  key=f'check_{feature}_{name}')
+            if kind_of_value == 'population':
+                entered = np.log(entered)
+            if kind_of_value == 'share':
+                entered = entered / 100
+            edited[feature] = entered
+        states = cross_district['states']
+        edited['state'] = columns[0].selectbox('State', states, index=states.index(profile['state']), key=f'check_state_{name}')
+
+    original_row = districts.set_index('district').loc[[name], cross_district['features']]
+    edited_row = pd.DataFrame([edited])[cross_district['features']]
+    with results_area:
+        st.subheader('Typical rate for this profile', anchor=False)
+        items = []
+        for crime_type, label in CRIMES.items():
+            model = cross_district['models'][f'{crime_type}_per_1000']
+            original, new = model.predict(original_row)[0], model.predict(edited_row)[0]
+            higher_than = (districts[f'{crime_type}_avg'] < new).mean() * 100
+            items.append((f'{label} per 1,000 people', f'{new:.2f}',
+                          f'{signed(new - original, 2, "")} vs {name}’s current profile; higher than {higher_than:.0f}% of districts’ actual averages'))
+        show_stats(items)
+        st.caption('This uses the cross-district model trained on all 131 districts. The expected rate on the '
+                   'District profile page comes from a model trained without that district, so the two can differ slightly.')
+
+        with st.expander('Year-ahead model for the same profile'):
+            st.markdown('<p class="small-note">The year-ahead model uses four of these inputs (population, students, schools and '
+                        'median income) and predicts a single year’s rate instead of a 2020–2023 average.</p>', unsafe_allow_html=True)
+            row = pd.DataFrame([{feature: edited[feature] for feature in year_ahead['features']}])
+            show_stats([(f'{label}, single year', f'{year_ahead["models"][f"{crime_type}_per_1000"].predict(row)[0]:.2f}',
+                         year_ahead['model_names'][f'{crime_type}_per_1000'], 'stat-quiet') for crime_type, label in CRIMES.items()])
+
+
+# ---------- about ----------
+
+def about_page():
+    with band():
+        st.title('About the data and models')
+        st.markdown(
+            '<p class="page-lead">Who this is for: crime-prevention planners, for example state police planning units or '
+            'local safe-city programme teams, who decide which districts to look at first. The models give an expected '
+            'rate and an outlook; the decision about what to do in a district stays with the planner. The test scores below '
+            'come from the project notebook: the cross-district model was tested on 10 random splits of the districts, and '
+            'the year-ahead model was trained on 2022 and tested on 2023.</p>',
+            unsafe_allow_html=True)
+
+    with panel('cross'):
+        st.subheader('Cross-district model: the expected rate', anchor=False)
+        repeated = cross_district['repeated_results']
+        summary = repeated.groupby('target')['R2'].agg(['mean', 'min', 'max'])
+        assault_model, property_model = cross_district['model_names']['assault_per_1000'], cross_district['model_names']['property_per_1000']
+        chosen_models = (f'{assault_model} for both crime types' if assault_model == property_model
+                         else f'{assault_model} for assault and {property_model} for property crime')
+        text, chart_area = st.columns([1, 1.3])
+        text.markdown(
+            f'- Predicts a district’s 2020–2023 average crime rate from its 2022 profile and state.\n'
+            f'- Model: {chosen_models}, chosen with 5-fold cross-validation '
+            f'from Linear Regression, Decision Tree, Random Forest, KNN and SVR.\n'
+            f'- Tested on 10 random splits of the districts (80% training, 20% test). The mean test R² is '
+            f'{summary.loc["assault_per_1000", "mean"]:.2f} for assault and {summary.loc["property_per_1000", "mean"]:.2f} for '
+            f'property crime, so the profile explains part of the differences between districts, not all of them.')
+        chart = alt.Chart(repeated.replace({'assault_per_1000': 'Assault crime', 'property_per_1000': 'Property crime'})).mark_line(point=True, strokeWidth=2.5).encode(
+            x=alt.X('split:O', title='Split'), y=alt.Y('R2:Q', title='Test R²'),
+            color=alt.Color('target:N', scale=alt.Scale(range=[RED, BLUE]), title=None),
+            tooltip=['target', 'split', 'model', alt.Tooltip('R2:Q', format='.2f')])
+        chart_area.altair_chart(chart.properties(background='transparent'))
+        chart_area.caption('Test R² for each of the 10 splits. The score depends on which districts end up in the 27-district test set.')
+
+    left, right = st.columns([1.25, 1])
+    with left, panel('yearahead'):
+        st.subheader('Year-ahead model: the 2024 prediction', anchor=False)
+        test = year_ahead['test_results'].copy()
+        test['target'] = test['target'].map({'assault_per_1000': 'Assault crime', 'property_per_1000': 'Property crime'})
+        st.markdown(
+            '- Trained on 2022 and tested on 2023 for the same districts, then trained on 2022 and 2023 to predict 2024.\n'
+            '- In the 2023 test, using each district’s previous-year rate was more accurate than the model, so the 2024 '
+            'outlook is shown as a rough guide and is not used for the flags.')
+        st.dataframe(test, hide_index=True, column_config={
+            'target': 'Crime type', 'model': 'Model',
+            'R2': st.column_config.NumberColumn('R²', format='%.2f'), 'MAE': st.column_config.NumberColumn(format='%.3f'),
+            'MSE': st.column_config.NumberColumn(format='%.4f'), 'RMSE': st.column_config.NumberColumn(format='%.3f')})
+
+    with right, panel('limits'):
+        st.subheader('Limits of the data', anchor=False)
+        st.markdown(
+            '- Crimes are counted where they happen but divided by the people who live there, so districts with many '
+            'commuters or tourists can show high rates.\n'
+            '- There is no 2023 income survey; 2023 income is estimated from the 2022 and 2024 surveys.\n'
+            '- Serdang’s 2020 and 2021 property crime totals were corrected in the source data (other theft was counted twice).\n'
+            '- Crime data ends in 2023, so the 2024 prediction cannot be checked yet.\n'
+            '- The models show patterns between districts, not causes.')
+
+
+{'Overview': overview_page, 'Districts needing attention': review_page, 'District profile': profile_page,
+ 'Sandbox mode': profile_check_page, 'About the data and models': about_page}[page]()
