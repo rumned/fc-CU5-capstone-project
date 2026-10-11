@@ -82,7 +82,7 @@ st.markdown("""
 .stat-fill {background: var(--accent); border-color: var(--accent);}
 .stat-fill .stat-label, .stat-fill .stat-value, .stat-fill .stat-note {color: #ffffff;}
 .stat-pct-up {color: var(--red); font-weight: 700;}
-.stat-pct-down {color: var(--blue); font-weight: 700;}
+.stat-pct-down {color: var(--light-blue); font-weight: 700;}
 .stat-pct-nosign {color: var(--reference-grey); font-weight: 700;}
 /* cards in one row take the height of the tallest card */
 [data-testid="stColumn"]:has(> .stVerticalBlock > [data-testid="stElementContainer"] .stat) > .stVerticalBlock {height: 100%;}
