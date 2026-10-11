@@ -1,7 +1,5 @@
 # CU5 Project Proposal: Crime Rate Prediction Model
 
-Oct 12, 2026 · @r
-
 ## Overview
 
 This project builds machine-learning models that predict assault and property crimes per 1,000 people for 131 districts in Malaysia, from each district's population, education, income and household data.
