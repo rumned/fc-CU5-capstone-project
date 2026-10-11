@@ -663,8 +663,11 @@ def about_page():
         text, chart_area = st.columns([1, 1.3])
         text.markdown(
             f'- Predicts a district’s 2020–2023 average crime rate from its 2022 profile and state.\n'
-            f'- Model: {chosen_models}, chosen with 5-fold cross-validation '
-            f'from Linear Regression, Decision Tree, Random Forest, KNN and SVR.\n'
+            f'- Expected rates: the districts are split into 5 folds. For each fold, the model and its parameters are '
+            f'chosen with 5-fold cross-validation on the other 4 folds, from Linear Regression, Decision Tree, Random Forest, '
+            f'KNN and SVR, and that model predicts the held-out fold. A district is not used to train or choose the model '
+            f'for its own expected rate. The model choice is made separately in each fold, so it can differ between folds.\n'
+            f'- Sandbox mode: uses {chosen_models}, chosen the same way on all 131 districts.\n'
             f'- Tested on 10 random splits of the districts (80% training, 20% test). The mean test R² is '
             f'{summary.loc["assault_per_1000", "mean"]:.2f} for assault and {summary.loc["property_per_1000", "mean"]:.2f} for '
             f'property crime, so the profile explains part of the differences between districts, not all of them.')
