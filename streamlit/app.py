@@ -59,14 +59,25 @@ st.markdown("""
 /* dark band */
 .stVerticalBlock.st-key-band {background: var(--band); margin: -1rem calc(-1 * var(--gutter)) 0.6rem; width: calc(100% + 2 * var(--gutter)); max-width: none;
               padding: 2rem var(--gutter) 2.2rem; gap: 1.1rem;}
-.st-key-band h1 {color: #ffffff; font-size: 2.3rem; font-weight: 700; letter-spacing: -0.02em; padding: 0;}
+/* page title: line height set so the title fits its own box, with a small space under it */
+.st-key-band h1 {color: #ffffff; font-size: 2.3rem; font-weight: 700; letter-spacing: -0.02em; padding: 0; line-height: 1.2;
+                 margin-bottom: 0.3rem;}
+/* Streamlit puts a -1rem bottom margin under headings, which lets the title overlap the space below it */
+.st-key-band [data-testid="stHeading"] [data-testid="stMarkdownContainer"] {margin-bottom: 0;}
+/* the same -1rem margin sits under markdown text, so it is removed under the page description and the district heading */
+.st-key-band [data-testid="stMarkdownContainer"]:has(> .page-lead, > .district-heading) {margin-bottom: 0;}
 .st-key-band h3 {color: #ffffff; font-size: 1.15rem; font-weight: 700; padding: 0;}
-.st-key-band [data-testid="stWidgetLabel"] p {color: var(--band-text);}
+/* widget labels in the band (e.g. District) */
+.st-key-band [data-testid="stWidgetLabel"] {margin-bottom: 0.4rem;}
+.st-key-band [data-testid="stWidgetLabel"] p {color: var(--teal);}
 .st-key-band [data-testid="stCaptionContainer"] {color: var(--band-text);}
 [data-testid="stMain"] .st-key-band [data-testid="stExpander"] details {background: var(--band-card); border-color: var(--band-line);}
 .st-key-band [data-testid="stExpander"] summary {color: #ffffff;}
-.page-lead {font-size: 1.05rem; color: var(--band-text); max-width: 70ch; margin: 0; line-height: 1.55;}
-.district-heading {font-size: 1.05rem; color: var(--band-text); margin: 0; line-height: 1.9;}
+/* page description: a larger space under it separates the title and description from the controls */
+.page-lead {font-size: 1.05rem; color: var(--band-text); max-width: 70ch; margin: 0 0 1rem 0; line-height: 1.55;}
+/* District profile: state, profile group and flags on a lighter box */
+.district-heading {font-size: 1.05rem; color: var(--band-text); margin: 0; line-height: 1.9; background: var(--band-card);
+                   border: 1px solid var(--band-line); border-radius: 6px; padding: 0.7rem 1.1rem; width: fit-content; max-width: 100%;}
 .district-heading .status {margin-left: 0.35rem;}
 
 /* number tiles in the band */
@@ -96,6 +107,9 @@ div[class*="st-key-card-"] [data-testid="stElementContainer"]:has(.stButton) {po
 div[class*="st-key-card-"] .stButton, div[class*="st-key-card-"] .stButton button {width: 100%; height: 100%;}
 div[class*="st-key-card-"] .stButton button {opacity: 0;}
 div[class*="st-key-card-"]:hover .stat {filter: brightness(1.1);}
+/* a clickable card in the same row as plain cards (Overview) takes the same height as them */
+[data-testid="stColumn"] > .stVerticalBlock > [data-testid="stLayoutWrapper"]:has(> div[class*="st-key-card-"]) {flex: 1 1 auto;}
+div[class*="st-key-card-"] {height: 100%;}
 /* the card whose list is open, and the card with keyboard focus */
 .stat-selected, div[class*="st-key-card-"]:has(button:focus-visible) .stat {outline: 3px solid #ffffff; outline-offset: 3px;}
 
@@ -264,6 +278,12 @@ def toggle_card(status):
     st.session_state['card_status'] = None if st.session_state.get('card_status') == status else status
 
 
+def open_card_list(status):
+    # Overview cards: opens the Districts needing attention page with the list for that status showing
+    st.session_state['page'] = 'Districts needing attention'
+    st.session_state['card_status'] = status
+
+
 def remember_district(widget_key):
     # keeps the chosen district when the user moves to another page
     st.session_state['selected_district'] = st.session_state[widget_key]
@@ -301,7 +321,7 @@ crime_name = CRIMES[crime]
 
 def overview_page():
     national = rates_by_year(years, None).set_index('year')
-    rate_2023, rate_2022 = national.loc[2023, f'{crime}_rate'], national.loc[2022, f'{crime}_rate']
+    rate_2023 = national.loc[2023, f'{crime}_rate']
     cases_2023, cases_2016 = national.loc[2023, f'crimes_{crime}'], national.loc[2016, f'crimes_{crime}']
     counts = table['status'].value_counts()
 
@@ -314,12 +334,26 @@ def overview_page():
             'The rates below are recorded cases per 1,000 residents, summed across all districts. The district counts '
             'use the thresholds under Flag settings in the sidebar.</p>',
             unsafe_allow_html=True)
-        show_stats([
-            (f'{crime_name} per 1,000 people, 2023', f'{rate_2023:.2f}', f'{signed((rate_2023 / rate_2022 - 1) * 100)} from 2022'),
-            (f'{crime_name} cases, 2023', f'{cases_2023:,.0f}', f'{signed((cases_2023 / cases_2016 - 1) * 100)} from 2016'),
-            ('Districts needing attention', counts.get('Attention', 0), 'crime above expected and rising', 'stat-fill stat-review'),
-            ('Districts to monitor', counts.get('Monitor', 0), 'crime above expected', 'stat-fill stat-monitor'),
-        ])
+        # the card row is made first so it sits above the sliders, but the sliders are read first
+        cards = st.columns(4)
+        sliders = st.columns(4)
+        # rates start in 2020, when population data starts; cases start in 2016
+        rate_years = list(national[f'{crime}_rate'].dropna().index)
+        rate_start, rate_end = sliders[0].select_slider('Rate: years to compare', rate_years, value=(2022, 2023), key='rate_years')
+        case_start, case_end = sliders[1].select_slider('Cases: years to compare', list(national.index), value=(2016, 2023), key='case_years')
+        rate_from, rate_to = national.loc[rate_start, f'{crime}_rate'], national.loc[rate_end, f'{crime}_rate']
+        cases_from, cases_to = national.loc[case_start, f'crimes_{crime}'], national.loc[case_end, f'crimes_{crime}']
+        cards[0].markdown(stat(f'{crime_name} per 1,000 people, {rate_end}', f'{rate_to:.2f}',
+                               f'{signed((rate_to / rate_from - 1) * 100)} from {rate_start}'), unsafe_allow_html=True)
+        cards[1].markdown(stat(f'{crime_name} cases, {case_end}', f'{cases_to:,.0f}',
+                               f'{signed((cases_to / cases_from - 1) * 100)} from {case_start}'), unsafe_allow_html=True)
+        # the two status cards open the matching list on the Districts needing attention page
+        status_cards = [('Attention', 'Districts needing attention', 'crime above expected and rising', 'stat-fill stat-review'),
+                        ('Monitor', 'Districts to monitor', 'crime above expected', 'stat-fill stat-monitor')]
+        for column, (status, label, note, kind) in zip(cards[2:], status_cards):
+            with column.container(key=f'card-overview-{status}'):
+                st.markdown(stat(label, counts.get(status, 0), note, kind), unsafe_allow_html=True)
+                st.button(f'Open {status.lower()} districts', key=f'overview_button_{status}', on_click=open_card_list, args=(status,))
 
     left, right = st.columns(2)
     with left, panel('cases'):
@@ -583,7 +617,7 @@ def profile_check_page():
             'profile. The change is measured against the same model’s prediction for the district’s current profile, and '
             'the percentage is the share of districts whose actual 2020–2023 average is lower.</p>', unsafe_allow_html=True)
         pick, _ = st.columns([1, 2])
-        name = pick.selectbox('Start from', district_names, index=district_names.index(st.session_state['selected_district']),
+        name = pick.selectbox('District name', district_names, index=district_names.index(st.session_state['selected_district']),
                               format_func=district_label, key='check_district', on_change=remember_district, args=('check_district',))
 
     profile = districts.set_index('district').loc[name]
