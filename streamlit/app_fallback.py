@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import re
+from functools import partial
 
 st.set_page_config(page_title='District Crime Viewer', page_icon='🧭', layout='wide')
 
@@ -45,7 +46,7 @@ st.markdown("""
   --band: #232529; --band-card: #2d3034; --band-line: #3f434a; --band-text: #c3c8cf;
   --page: #eceef1; --card: #ffffff; --line: #dcdfe4; --ink: #1e2126; --muted: #5c6370;
   --teal: #5bbcbe; --teal-ink: #23797c;
-  --red: #c8102e; --orange: #E0A124; --blue: #12306b; --light-blue:#8B93FC;
+  --red: #c8102e; --orange: #E0A124; --blue: #12306b; --light-blue:#8B93FC; --reference-grey: #8a909a;
   --gutter: 2.5rem;
 }
 @media (max-width: 640px) {:root {--gutter: 1rem;}}
@@ -59,14 +60,25 @@ st.markdown("""
 /* dark band */
 .stVerticalBlock.st-key-band {background: var(--band); margin: -1rem calc(-1 * var(--gutter)) 0.6rem; width: calc(100% + 2 * var(--gutter)); max-width: none;
               padding: 2rem var(--gutter) 2.2rem; gap: 1.1rem;}
-.st-key-band h1 {color: #ffffff; font-size: 2.3rem; font-weight: 700; letter-spacing: -0.02em; padding: 0;}
+/* page title: line height set so the title fits its own box, with a small space under it */
+.st-key-band h1 {color: #ffffff; font-size: 2.3rem; font-weight: 700; letter-spacing: -0.02em; padding: 0; line-height: 1.2;
+                 margin-bottom: 0.3rem;}
+/* Streamlit puts a -1rem bottom margin under headings, which lets the title overlap the space below it */
+.st-key-band [data-testid="stHeading"] [data-testid="stMarkdownContainer"] {margin-bottom: 0;}
+/* the same -1rem margin sits under markdown text, so it is removed under the page description and the district heading */
+.st-key-band [data-testid="stMarkdownContainer"]:has(> .page-lead, > .district-heading) {margin-bottom: 0;}
 .st-key-band h3 {color: #ffffff; font-size: 1.15rem; font-weight: 700; padding: 0;}
-.st-key-band [data-testid="stWidgetLabel"] p {color: var(--band-text);}
+/* widget labels in the band (e.g. District) */
+.st-key-band [data-testid="stWidgetLabel"] {margin-bottom: 0.4rem;}
+.st-key-band [data-testid="stWidgetLabel"] p {color: var(--teal);}
 .st-key-band [data-testid="stCaptionContainer"] {color: var(--band-text);}
 [data-testid="stMain"] .st-key-band [data-testid="stExpander"] details {background: var(--band-card); border-color: var(--band-line);}
 .st-key-band [data-testid="stExpander"] summary {color: #ffffff;}
-.page-lead {font-size: 1.05rem; color: var(--band-text); max-width: 70ch; margin: 0; line-height: 1.55;}
-.district-heading {font-size: 1.05rem; color: var(--band-text); margin: 0; line-height: 1.9;}
+/* page description: a larger space under it separates the title and description from the controls */
+.page-lead {font-size: 1.05rem; color: var(--band-text); max-width: 70ch; margin: 0 0 1rem 0; line-height: 1.55;}
+/* District profile: state, profile group and flags on a lighter box */
+.district-heading {font-size: 1.05rem; color: var(--band-text); margin: 0; line-height: 1.9; background: var(--band-card);
+                   border: 1px solid var(--band-line); border-radius: 6px; padding: 0.7rem 1.1rem; width: fit-content; max-width: 100%;}
 .district-heading .status {margin-left: 0.35rem;}
 
 /* number tiles in the band */
@@ -82,14 +94,25 @@ st.markdown("""
 .stat-fill {background: var(--accent); border-color: var(--accent);}
 .stat-fill .stat-label, .stat-fill .stat-value, .stat-fill .stat-note {color: #ffffff;}
 .stat-pct-up {color: var(--red); font-weight: 700;}
-.stat-pct-down {color: var(--blue); font-weight: 700;}
-.stat-pct-nosign {color: var(--teal); font-weight: 700;}
+.stat-pct-down {color: var(--light-blue); font-weight: 700;}
+.stat-pct-nosign {color: var(--reference-grey); font-weight: 700;}
 /* cards in one row take the height of the tallest card */
 [data-testid="stColumn"]:has(> .stVerticalBlock > [data-testid="stElementContainer"] .stat) > .stVerticalBlock {height: 100%;}
 .stVerticalBlock > [data-testid="stElementContainer"]:has(.stat) {flex: 1 1 auto;}
 .stMarkdown:has(.stat), .stMarkdown:has(.stat) > div {height: 100%;}
 [data-testid="stMarkdownContainer"]:has(> .stat) {height: 100%; margin-bottom: 0;}
 .stat {height: 100%; box-sizing: border-box;}
+/* status cards on the Districts needing attention page: a hidden button covers each card, so the whole card is clickable */
+div[class*="st-key-card-"] {position: relative;}
+div[class*="st-key-card-"] [data-testid="stElementContainer"]:has(.stButton) {position: absolute; inset: 0; width: auto; z-index: 1;}
+div[class*="st-key-card-"] .stButton, div[class*="st-key-card-"] .stButton button {width: 100%; height: 100%;}
+div[class*="st-key-card-"] .stButton button {opacity: 0;}
+div[class*="st-key-card-"]:hover .stat {filter: brightness(1.1);}
+/* a clickable card in the same row as plain cards (Overview) takes the same height as them */
+[data-testid="stColumn"] > .stVerticalBlock > [data-testid="stLayoutWrapper"]:has(> div[class*="st-key-card-"]) {flex: 1 1 auto;}
+div[class*="st-key-card-"] {height: 100%;}
+/* the card whose list is open, and the card with keyboard focus */
+.stat-selected, div[class*="st-key-card-"]:has(button:focus-visible) .stat {outline: 3px solid #ffffff; outline-offset: 3px;}
 
 /* status labels */
 .status {display: inline-block; padding: 0.1rem 0.6rem; border-radius: 3px; font-size: 0.85rem; font-weight: 600; color: #ffffff;}
@@ -107,6 +130,8 @@ div[class*="st-key-panel-"] {background: var(--card); border: 1px solid var(--li
 /* panels side by side in columns take the height of the tallest one */
 [data-testid="stColumn"] > .stVerticalBlock > [data-testid="stLayoutWrapper"]:has(> div[class*="st-key-panel-"]) {flex: 1 1 auto;}
 div[class*="st-key-panel-"] h3 {font-size: 1.15rem; font-weight: 700; padding: 0; color: var(--ink);}
+/* space under panel titles made with st.subheader; titles made by panel_header() sit in a row with buttons and are left as they are */
+div[class*="st-key-panel-"] > [data-testid="stElementContainer"] h3 {padding-bottom: 1rem;}
 [data-testid="stMain"] [data-testid="stExpander"] details {background: var(--card); border-color: var(--line);}
 
 /* outlined buttons, as in the panel headers of the reference layout */
@@ -115,6 +140,9 @@ button[data-testid="stBaseButton-secondary"]:hover {background: var(--teal-ink);
 /* the two buttons in the Overview summary panel have the same width, side by side or stacked */
 .st-key-panel-summary [data-testid="stElementContainer"]:has(.stButton) {flex: 0 1 12rem; width: 12rem;}
 .st-key-panel-summary .stButton button {width: 100%;}
+/* Sandbox mode profile panel: the reset button keeps its full label when the panel is narrow */
+.st-key-panel-inputs [data-testid="stColumn"]:has(.stButton) {flex: 0 0 auto; width: auto;}
+.st-key-panel-inputs [data-testid="stColumn"]:has(h3) {flex: 1 1 0; min-width: 0;}
 
 .next-step {background: var(--card); border: 1px solid var(--line); border-left: 6px solid var(--accent); border-radius: 4px;
             padding: 1rem 1.25rem; margin-bottom: 0.5rem; color: var(--ink); --accent: var(--blue);}
@@ -122,6 +150,7 @@ button[data-testid="stBaseButton-secondary"]:hover {background: var(--teal-ink);
 .next-step.stat-monitor {--accent: var(--orange);}
 .next-step p {margin: 0.25rem 0 0 0; max-width: 75ch; line-height: 1.5;}
 .small-note {font-size: 0.86rem; color: var(--band-text); max-width: 75ch;}
+div[class*="st-key-panel-"] .small-note {color: var(--muted);}
 </style>
 """, unsafe_allow_html=True)
 
@@ -148,7 +177,7 @@ cross_district = bundle['cross_district']
 
 @st.cache_data
 def outlook_2024(districts):
-    # runs the year-ahead models on each district's 2024 profile
+    # runs the time-based train/test models on each district's 2024 profile
     features_2024 = districts[[feature + '_2024' for feature in year_ahead['features']]]
     features_2024.columns = year_ahead['features']
     return pd.DataFrame({crime: year_ahead['models'][f'{crime}_per_1000'].predict(features_2024) for crime in CRIMES},
@@ -194,7 +223,11 @@ def rates_by_year(years, group):
 
 def pct_span(match):
     text = match.group(0)
-    sign_class = 'stat-pct-down' if text.startswith('-') else 'stat-pct-up' if text.startswith('+') else 'stat-pct-nosign'
+    # a value that rounds to zero (+0.00, -0.00, +0%) is coloured like an unsigned number
+    if float(text.rstrip('%')) == 0:
+        sign_class = 'stat-pct-nosign'
+    else:
+        sign_class = 'stat-pct-down' if text.startswith('-') else 'stat-pct-up' if text.startswith('+') else 'stat-pct-nosign'
     return f'<span class="stat-pct {sign_class}">{text}</span>'
 
 def stat(label, value, note='', kind=''):
@@ -241,6 +274,25 @@ def go_to(page, district=None):
         st.session_state['selected_district'] = district
 
 
+def toggle_card(status):
+    # clicking the card whose list is already open hides the list
+    st.session_state['card_status'] = None if st.session_state.get('card_status') == status else status
+
+
+def open_card_list(status):
+    # Overview cards: opens the Districts needing attention page with the list for that status showing
+    st.session_state['page'] = 'Districts needing attention'
+    st.session_state['card_status'] = status
+
+
+def open_clicked_district(table_key, district_names):
+    # a click on a district name in a list opens that district's profile.
+    # the selected cell is (row position, column name); the row position stays the same when the list is sorted
+    cells = st.session_state[table_key]['selection']['cells']
+    if cells and cells[0][1] == 'district':
+        go_to('District profile', district_names[cells[0][0]])
+
+
 def remember_district(widget_key):
     # keeps the chosen district when the user moves to another page
     st.session_state['selected_district'] = st.session_state[widget_key]
@@ -278,7 +330,7 @@ crime_name = CRIMES[crime]
 
 def overview_page():
     national = rates_by_year(years, None).set_index('year')
-    rate_2023, rate_2022 = national.loc[2023, f'{crime}_rate'], national.loc[2022, f'{crime}_rate']
+    rate_2023 = national.loc[2023, f'{crime}_rate']
     cases_2023, cases_2016 = national.loc[2023, f'crimes_{crime}'], national.loc[2016, f'crimes_{crime}']
     counts = table['status'].value_counts()
 
@@ -291,12 +343,26 @@ def overview_page():
             'The rates below are recorded cases per 1,000 residents, summed across all districts. The district counts '
             'use the thresholds under Flag settings in the sidebar.</p>',
             unsafe_allow_html=True)
-        show_stats([
-            (f'{crime_name} per 1,000 people, 2023', f'{rate_2023:.2f}', f'{signed((rate_2023 / rate_2022 - 1) * 100)} from 2022'),
-            (f'{crime_name} cases, 2023', f'{cases_2023:,.0f}', f'{signed((cases_2023 / cases_2016 - 1) * 100)} from 2016'),
-            ('Districts needing attention', counts.get('Attention', 0), 'crime above expected and rising', 'stat-fill stat-review'),
-            ('Districts to monitor', counts.get('Monitor', 0), 'crime above expected', 'stat-fill stat-monitor'),
-        ])
+        # the card row is made first so it sits above the sliders, but the sliders are read first
+        cards = st.columns(4)
+        sliders = st.columns(4)
+        # rates start in 2020, when population data starts; cases start in 2016
+        rate_years = list(national[f'{crime}_rate'].dropna().index)
+        rate_start, rate_end = sliders[0].select_slider('Rate: years to compare', rate_years, value=(2022, 2023), key='rate_years')
+        case_start, case_end = sliders[1].select_slider('Cases: years to compare', list(national.index), value=(2016, 2023), key='case_years')
+        rate_from, rate_to = national.loc[rate_start, f'{crime}_rate'], national.loc[rate_end, f'{crime}_rate']
+        cases_from, cases_to = national.loc[case_start, f'crimes_{crime}'], national.loc[case_end, f'crimes_{crime}']
+        cards[0].markdown(stat(f'{crime_name} per 1,000 people, {rate_end}', f'{rate_to:.2f}',
+                               f'{signed((rate_to / rate_from - 1) * 100)} from {rate_start}'), unsafe_allow_html=True)
+        cards[1].markdown(stat(f'{crime_name} cases, {case_end}', f'{cases_to:,.0f}',
+                               f'{signed((cases_to / cases_from - 1) * 100)} from {case_start}'), unsafe_allow_html=True)
+        # the two status cards open the matching list on the Districts needing attention page
+        status_cards = [('Attention', 'Districts needing attention', 'crime above expected and rising', 'stat-fill stat-review'),
+                        ('Monitor', 'Districts to monitor', 'crime above expected', 'stat-fill stat-monitor')]
+        for column, (status, label, note, kind) in zip(cards[2:], status_cards):
+            with column.container(key=f'card-overview-{status}'):
+                st.markdown(stat(label, counts.get(status, 0), note, kind), unsafe_allow_html=True)
+                st.button(f'Open {status.lower()} districts', key=f'overview_button_{status}', on_click=open_card_list, args=(status,))
 
     left, right = st.columns(2)
     with left, panel('cases'):
@@ -322,7 +388,7 @@ def overview_page():
     with panel('summary'):
         buttons = panel_header('What this shows')
         buttons.button('Open the review list', on_click=go_to, args=('Districts needing attention',), type='primary')
-        buttons.button('Check a district profile', on_click=go_to, args=('Sandbox mode',))
+        buttons.button('Sandbox mode', on_click=go_to, args=('Sandbox mode',))
         st.markdown(
             f'- {crime_name} cases {"fell" if cases_2023 < cases_2016 else "rose"} from {cases_2016:,.0f} in 2016 to {cases_2023:,.0f} in 2023.\n'
             f'- {highest_state["state"]} has the highest rate in 2023 ({highest_state["rate"]:.2f} per 1,000 people).\n'
@@ -342,8 +408,39 @@ def review_page():
             'profile to see why it was flagged. The expected rate is the 2020–2023 average that the cross-district model '
             'predicts for a district’s profile, using a model trained without that district. The thresholds are set under '
             'Flag settings in the sidebar.</p>', unsafe_allow_html=True)
-        show_stats([(status, counts.get(status, 0), f'of {len(table)} districts',
-                     'stat-fill ' + STATUS_CLASSES[status].replace('status', 'stat')) for status in STATUSES])
+        open_status = st.session_state.get('card_status')
+        for column, status in zip(st.columns(len(STATUSES)), STATUSES):
+            kind = 'stat-fill ' + STATUS_CLASSES[status].replace('status', 'stat')
+            if status == open_status:
+                kind += ' stat-selected'
+            with column.container(key=f'card-{status}'):
+                st.markdown(stat(status, counts.get(status, 0), f'of {len(table)} districts', kind), unsafe_allow_html=True)
+                st.button(f'Show {status.lower()} districts', key=f'card_button_{status}', on_click=toggle_card, args=(status,))
+
+    columns = ['district', 'state', 'status', 'average', 'expected', 'gap_pct', 'rate_2023', 'change_pct', 'cases_2023', 'outlook_2024']
+    column_config = {
+        'district': 'District', 'state': 'State', 'status': 'Status',
+        'average': st.column_config.NumberColumn('2020–2023 average', format='%.2f'),
+        'expected': st.column_config.NumberColumn('Expected', format='%.2f'),
+        'gap_pct': st.column_config.NumberColumn('Gap (%)', format='%+.0f'),
+        'rate_2023': st.column_config.NumberColumn('2023 rate', format='%.2f'),
+        'change_pct': st.column_config.NumberColumn('2023 vs 2020–2022 (%)', format='%+.0f'),
+        'cases_2023': st.column_config.NumberColumn('Cases 2023', format='%d'),
+        'outlook_2024': st.column_config.NumberColumn('2024 prediction', format='%.2f'),
+    }
+
+    if open_status is not None:
+        with panel('cardlist'):
+            card_districts = table[table['status'] == open_status].sort_values('gap_pct', ascending=False)
+            st.subheader(f'{open_status}: {len(card_districts)} district{"" if len(card_districts) == 1 else "s"}', anchor=False)
+            if card_districts.empty:
+                st.caption('No districts have this status at the current Flag settings.')
+            else:
+                st.dataframe(card_districts[[column for column in columns if column != 'status']], hide_index=True,
+                             column_config=column_config, key='card_table', selection_mode='single-cell',
+                             on_select=partial(open_clicked_district, 'card_table', card_districts['district'].tolist()))
+                st.caption(f'Rates are {crime_name.lower()} cases per 1,000 people. Click a district name to open its profile. '
+                           'Click the card again to hide this list.')
 
     with st.expander('How the flags work'):
         st.markdown(
@@ -379,24 +476,15 @@ def review_page():
             shown = shown[shown['state'].isin(chosen_states)]
         shown = shown.assign(status_order=shown['status'].map({status: i for i, status in enumerate(STATUSES)}))
         shown = shown.sort_values(['status_order', 'gap_pct'], ascending=[True, False])
-        columns = ['district', 'state', 'status', 'average', 'expected', 'gap_pct', 'rate_2023', 'change_pct', 'cases_2023', 'outlook_2024']
 
         if shown.empty:
             st.info('No districts match these filters. Add a status or a state, or lower the thresholds under Flag settings.')
             return
         header_buttons.download_button('Download this list (CSV)', shown[columns].to_csv(index=False),
                                        file_name=f'districts_to_review_{crime}.csv', mime='text/csv')
-        st.dataframe(shown[columns], hide_index=True, column_config={
-            'district': 'District', 'state': 'State', 'status': 'Status',
-            'average': st.column_config.NumberColumn('2020–2023 average', format='%.2f'),
-            'expected': st.column_config.NumberColumn('Expected', format='%.2f'),
-            'gap_pct': st.column_config.NumberColumn('Gap (%)', format='%+.0f'),
-            'rate_2023': st.column_config.NumberColumn('2023 rate', format='%.2f'),
-            'change_pct': st.column_config.NumberColumn('2023 vs 2020–2022 (%)', format='%+.0f'),
-            'cases_2023': st.column_config.NumberColumn('Cases 2023', format='%d'),
-            'outlook_2024': st.column_config.NumberColumn('2024 prediction', format='%.2f'),
-        })
-        st.caption(f'Rates are {crime_name.lower()} cases per 1,000 people.')
+        st.dataframe(shown[columns], hide_index=True, column_config=column_config, key='list_table', selection_mode='single-cell',
+                     on_select=partial(open_clicked_district, 'list_table', shown['district'].tolist()))
+        st.caption(f'Rates are {crime_name.lower()} cases per 1,000 people. Click a district name to open its profile.')
 
         action_left, action_right, _ = st.columns([1.4, 1, 1.6], vertical_alignment='bottom')
         chosen = action_left.selectbox('District', shown['district'], format_func=district_label)
@@ -435,7 +523,7 @@ def profile_page():
         st.markdown(
             '<p class="page-lead">View the profile of each district. The 2020–2023 average and the 2023 rate are recorded '
             'cases per 1,000 residents. The expected rate comes from the cross-district model trained without this district, '
-            'and the 2024 prediction comes from the year-ahead model run on the district’s 2024 profile.</p>',
+            'and the 2024 prediction comes from the time-based train/test model run on the district’s 2024 profile.</p>',
             unsafe_allow_html=True)
         pick, _ = st.columns([1, 2])
         name = pick.selectbox('District', district_names, index=district_names.index(st.session_state['selected_district']),
@@ -457,7 +545,7 @@ def profile_page():
             ('2020–2023 average', f'{row["average"]:.2f}', 'per 1,000 people', kind),
             ('Expected for this profile', f'{row["expected"]:.2f}', f'gap {signed(row["gap_pct"])}', kind),
             ('2023 rate', f'{row["rate_2023"]:.2f}', f'{signed(row["change_pct"])} vs 2020–2022, {row["cases_2023"]:,.0f} cases', kind),
-            ('2024 prediction', f'{row["outlook_2024"]:.2f}', 'year-ahead model', 'stat-quiet'),
+            ('2024 prediction', f'{row["outlook_2024"]:.2f}', 'time-based train/test model', 'stat-quiet'),
         ])
 
     kind_class = kind if row['status'] != 'Normal' else ''
@@ -483,7 +571,7 @@ def profile_page():
             color=alt.Color('series:N', scale=alt.Scale(domain=order, range=LINE_COLOURS), title=None, sort=order),
             tooltip=['series', 'year', alt.Tooltip('rate:Q', format='.2f')])
         st.altair_chart(chart.properties(background='transparent'))
-        st.caption(f'The 2024 prediction from the year-ahead model is {row["outlook_2024"]:.2f}. In the 2023 test, '
+        st.caption(f'The 2024 prediction from the time-based train/test model is {row["outlook_2024"]:.2f}. In the 2023 test, '
                    f'using the previous year’s rate was more accurate (R² {baseline_r2:.2f}) than this model '
                    f'(R² {model_r2:.2f}), so treat the outlook as a rough guide.')
     with right, panel('similar'):
@@ -517,7 +605,7 @@ def profile_page():
                   f'- 2020–2023 average: {row["average"]:.2f} per 1,000 people\n'
                   f'- Expected for this profile: {row["expected"]:.2f} (gap {signed(row["gap_pct"])})\n'
                   f'- 2023 rate: {row["rate_2023"]:.2f} ({signed(row["change_pct"])} vs 2020–2022), {row["cases_2023"]:,.0f} cases\n'
-                  f'- 2024 year-ahead model outlook: {row["outlook_2024"]:.2f}\n'
+                  f'- 2024 time-based train/test model outlook: {row["outlook_2024"]:.2f}\n'
                   f'- Similar districts: {", ".join(similar["district"])}\n\n'
                   f'Suggested next step: {next_step_text(row)}\n')
         header_buttons.download_button('Download district summary', report, file_name=f'{name}_{crime}_summary.md'.replace(' ', '_'))
@@ -537,25 +625,27 @@ def profile_check_page():
         st.title('Sandbox mode: crime rate prediction')
         st.markdown(
             '<p class="page-lead">Adjust each district data to see how changes affect crime rate predictions.</br>'
-            'Parameters are customizable below. The typical rate is the cross-district model’s prediction for the edited '
+            'Parameters are customizable on the right. The typical rate is the cross-district model’s prediction for the edited '
             'profile. The change is measured against the same model’s prediction for the district’s current profile, and '
             'the percentage is the share of districts whose actual 2020–2023 average is lower.</p>', unsafe_allow_html=True)
         pick, _ = st.columns([1, 2])
-        name = pick.selectbox('Start from', district_names, index=district_names.index(st.session_state['selected_district']),
+        name = pick.selectbox('District name', district_names, index=district_names.index(st.session_state['selected_district']),
                               format_func=district_label, key='check_district', on_change=remember_district, args=('check_district',))
-        # the results are shown in the band, above the inputs, so they stay in view while the profile is edited
-        results_area = st.container()
 
     profile = districts.set_index('district').loc[name]
     ranges = cross_district['ranges']
 
-    with panel('inputs'):
+    # the results and the inputs sit side by side; on narrow screens the columns stack with the results first
+    results_column, inputs_column = st.columns(2)
+    with inputs_column, panel('inputs'):
         header_buttons = panel_header('Profile')
         header_buttons.button(f'Reset to {name}', on_click=reset_profile, args=(name,))
         st.caption('Each value is limited to the range seen across the 131 districts.')
         edited = {}
-        columns = st.columns(3)
         for i, (feature, (label, kind_of_value, step, number_format)) in enumerate(PROFILE_INPUTS.items()):
+            # a new row for every two inputs; bottom alignment keeps the boxes in a row level when one label wraps
+            if i % 2 == 0:
+                columns = st.columns(2, vertical_alignment='bottom')
             low, high, value = ranges[feature]['min'], ranges[feature]['max'], profile[feature]
             if kind_of_value == 'population':
                 low, high, value = np.exp(low), np.exp(high), np.exp(value)
@@ -563,7 +653,7 @@ def profile_check_page():
                 low, high, value = low * 100, high * 100, value * 100
             # the saved CSV and the model ranges can differ in the last decimal place, so the start value is kept inside the range
             value = min(max(value, low), high)
-            entered = columns[i % 3].number_input(label, float(low), float(high), float(value), step=step, format=number_format,
+            entered = columns[i % 2].number_input(label, float(low), float(high), float(value), step=step, format=number_format,
                                                   key=f'check_{feature}_{name}')
             if kind_of_value == 'population':
                 entered = np.log(entered)
@@ -571,11 +661,11 @@ def profile_check_page():
                 entered = entered / 100
             edited[feature] = entered
         states = cross_district['states']
-        edited['state'] = columns[0].selectbox('State', states, index=states.index(profile['state']), key=f'check_state_{name}')
+        edited['state'] = st.columns(2)[0].selectbox('State', states, index=states.index(profile['state']), key=f'check_state_{name}')
 
     original_row = districts.set_index('district').loc[[name], cross_district['features']]
     edited_row = pd.DataFrame([edited])[cross_district['features']]
-    with results_area:
+    with results_column, panel('results'):
         st.subheader('Typical rate for this profile', anchor=False)
         items = []
         for crime_type, label in CRIMES.items():
@@ -588,8 +678,8 @@ def profile_check_page():
         st.caption('This uses the cross-district model trained on all 131 districts. The expected rate on the '
                    'District profile page comes from a model trained without that district, so the two can differ slightly.')
 
-        with st.expander('Year-ahead model for the same profile'):
-            st.markdown('<p class="small-note">The year-ahead model uses four of these inputs (population, students, schools and '
+        with st.expander('Time-based train/test model for the same profile'):
+            st.markdown('<p class="small-note">The time-based train/test model uses four of these inputs (population, students, schools and '
                         'median income) and predicts a single year’s rate instead of a 2020–2023 average.</p>', unsafe_allow_html=True)
             row = pd.DataFrame([{feature: edited[feature] for feature in year_ahead['features']}])
             show_stats([(f'{label}, single year', f'{year_ahead["models"][f"{crime_type}_per_1000"].predict(row)[0]:.2f}',
@@ -606,7 +696,7 @@ def about_page():
             'local safe-city programme teams, who decide which districts to look at first. The models give an expected '
             'rate and an outlook; the decision about what to do in a district stays with the planner. The test scores below '
             'come from the project notebook: the cross-district model was tested on 10 random splits of the districts, and '
-            'the year-ahead model was trained on 2022 and tested on 2023.</p>',
+            'the time-based train/test model was trained on 2022 and tested on 2023.</p>',
             unsafe_allow_html=True)
 
     with panel('cross'):
@@ -619,8 +709,11 @@ def about_page():
         text, chart_area = st.columns([1, 1.3])
         text.markdown(
             f'- Predicts a district’s 2020–2023 average crime rate from its 2022 profile and state.\n'
-            f'- Model: {chosen_models}, chosen with 5-fold cross-validation '
-            f'from Linear Regression, Decision Tree, Random Forest, KNN and SVR.\n'
+            f'- Expected rates: the districts are split into 5 folds. For each fold, the model and its parameters are '
+            f'chosen with 5-fold cross-validation on the other 4 folds, from Linear Regression, Decision Tree, Random Forest, '
+            f'KNN and SVR, and that model predicts the held-out fold. A district is not used to train or choose the model '
+            f'for its own expected rate. The model choice is made separately in each fold, so it can differ between folds.\n'
+            f'- Sandbox mode: uses {chosen_models}, chosen the same way on all 131 districts.\n'
             f'- Tested on 10 random splits of the districts (80% training, 20% test). The mean test R² is '
             f'{summary.loc["assault_per_1000", "mean"]:.2f} for assault and {summary.loc["property_per_1000", "mean"]:.2f} for '
             f'property crime, so the profile explains part of the differences between districts, not all of them.')
@@ -633,7 +726,7 @@ def about_page():
 
     left, right = st.columns([1.25, 1])
     with left, panel('yearahead'):
-        st.subheader('Year-ahead model: the 2024 prediction', anchor=False)
+        st.subheader('Time-based train/test model: the 2024 prediction', anchor=False)
         test = year_ahead['test_results'].copy()
         test['target'] = test['target'].map({'assault_per_1000': 'Assault crime', 'property_per_1000': 'Property crime'})
         st.markdown(

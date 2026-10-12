@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import re
+from functools import partial
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title='District Crime Viewer', page_icon='🧭', layout='wide')
 
@@ -150,6 +152,9 @@ button[data-testid="stBaseButton-secondary"]:hover {background: var(--teal-ink);
 .next-step p {margin: 0.25rem 0 0 0; max-width: 75ch; line-height: 1.5;}
 .small-note {font-size: 0.86rem; color: var(--band-text); max-width: 75ch;}
 div[class*="st-key-panel-"] .small-note {color: var(--muted);}
+/* holds the script that scrolls the District profile page to the top. It and its wrapper are taken out of the layout
+   with zero size, so they take no space; the script still runs because the element is still displayed */
+.st-key-scroll-top, [data-testid="stLayoutWrapper"]:has(> .st-key-scroll-top) {position: absolute; width: 0; height: 0; overflow: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -271,6 +276,9 @@ def go_to(page, district=None):
     st.session_state['page'] = page
     if district is not None:
         st.session_state['selected_district'] = district
+    if page == 'District profile':
+        # the profile opens at the top, not at the scroll position of the page the user came from
+        st.session_state['scroll_to_top'] = True
 
 
 def toggle_card(status):
@@ -282,6 +290,14 @@ def open_card_list(status):
     # Overview cards: opens the Districts needing attention page with the list for that status showing
     st.session_state['page'] = 'Districts needing attention'
     st.session_state['card_status'] = status
+
+
+def open_clicked_district(table_key, district_names):
+    # a click on a district name in a list opens that district's profile.
+    # the selected cell is (row position, column name); the row position stays the same when the list is sorted
+    cells = st.session_state[table_key]['selection']['cells']
+    if cells and cells[0][1] == 'district':
+        go_to('District profile', district_names[cells[0][0]])
 
 
 def remember_district(widget_key):
@@ -428,8 +444,10 @@ def review_page():
                 st.caption('No districts have this status at the current Flag settings.')
             else:
                 st.dataframe(card_districts[[column for column in columns if column != 'status']], hide_index=True,
-                             column_config=column_config)
-                st.caption(f'Rates are {crime_name.lower()} cases per 1,000 people. Click the card again to hide this list.')
+                             column_config=column_config, key='card_table', selection_mode='single-cell',
+                             on_select=partial(open_clicked_district, 'card_table', card_districts['district'].tolist()))
+                st.caption(f'Rates are {crime_name.lower()} cases per 1,000 people. Click a district name to open its profile. '
+                           'Click the card again to hide this list.')
 
     with st.expander('How the flags work'):
         st.markdown(
@@ -471,8 +489,9 @@ def review_page():
             return
         header_buttons.download_button('Download this list (CSV)', shown[columns].to_csv(index=False),
                                        file_name=f'districts_to_review_{crime}.csv', mime='text/csv')
-        st.dataframe(shown[columns], hide_index=True, column_config=column_config)
-        st.caption(f'Rates are {crime_name.lower()} cases per 1,000 people.')
+        st.dataframe(shown[columns], hide_index=True, column_config=column_config, key='list_table', selection_mode='single-cell',
+                     on_select=partial(open_clicked_district, 'list_table', shown['district'].tolist()))
+        st.caption(f'Rates are {crime_name.lower()} cases per 1,000 people. Click a district name to open its profile.')
 
         action_left, action_right, _ = st.columns([1.4, 1, 1.6], vertical_alignment='bottom')
         chosen = action_left.selectbox('District', shown['district'], format_func=district_label)
@@ -505,6 +524,12 @@ def next_step_text(row):
 
 
 def profile_page():
+    if st.session_state.pop('scroll_to_top', False):
+        # scrolls the main area (data-testid stMain) back to the top. components.html runs the script in a small
+        # iframe, so the script reaches the app page through window.parent
+        with st.container(key='scroll-top'):
+            components.html('<script>window.parent.document.querySelector(\'[data-testid="stMain"]\').scrollTo(0, 0);</script>',
+                            height=0)
     district_names = sorted(districts['district'])
     with band():
         st.title('District profile')
