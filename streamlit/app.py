@@ -680,10 +680,9 @@ def about_page():
     with band():
         st.title('About the data and models')
         st.markdown(
-            '<p class="page-lead">Who this is for: crime-prevention planners, for example state police planning units or '
-            'local safe-city programme teams, who decide which districts to look at first. The models give an expected '
-            'rate and an outlook; the decision about what to do in a district stays with the planner. The test scores below '
-            'come from the project notebook: the cross-district model was tested on 10 random splits of the districts, and '
+            '<p class="page-lead">The models give an expected rate based on profile and future prediction.</br>'
+            'The test scores below come from the project notebook: '
+            'the cross-district model was tested on 10 random splits of the districts, and '
             'the time-based train/test model was trained on 2022 and tested on 2023.</p>',
             unsafe_allow_html=True)
 
