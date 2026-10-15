@@ -3,6 +3,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
+import os
 import re
 from functools import partial
 import streamlit.components.v1 as components
@@ -163,7 +164,14 @@ div[class*="st-key-panel-"] .small-note {color: var(--muted);}
 
 @st.cache_resource
 def load_bundle():
-    return joblib.load('crime_model.joblib')
+    # Get the directory where app.py is located
+    base_dir = os.path.dirname(__file__)
+
+    # Join it with your model file name
+    model_path = os.path.join(base_dir, "crime_model.joblib")
+
+    # Load the model
+    return joblib.load(model_path)
 
 
 @st.cache_data
