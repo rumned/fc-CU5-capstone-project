@@ -176,8 +176,9 @@ def load_bundle():
 
 @st.cache_data
 def load_tables():
-    districts = pd.read_csv('app_districts.csv')
-    years = pd.read_csv('app_district_years.csv')
+    base_dir = os.path.dirname(__file__)
+    districts = pd.read_csv(os.path.join(base_dir, 'app_districts.csv'))
+    years = pd.read_csv(os.path.join(base_dir, 'app_district_years.csv'))
     return districts, years
 
 
